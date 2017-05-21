@@ -1,7 +1,7 @@
-import .lib .integers .maps
+import .lib .integers .maps .errors
 
 namespace ast
-open integers maps
+open integers maps errors
 
 /- * Syntactic elements -/
 
@@ -86,7 +86,13 @@ structure signature : Type :=
 (sig_res : option typ)
 (sig_cc : calling_convention)
 
+def proj_sig_res (s : signature) : typ :=
+s.sig_res.get_or_else Tint
+
 instance signature_eq : decidable_eq signature := by tactic.mk_dec_eq_instance
+
+def signature_main : signature :=
+{ sig_args := [], sig_res := some Tint, sig_cc := cc_default }
 
 /- Memory accesses (load and store instructions) are annotated by
   a ``memory chunk'' indicating the type, size and signedness of the
@@ -145,7 +151,7 @@ inductive init_data : Type
 | float32 : float32 → init_data
 | float64 : float → init_data
 | space   : ℤ → init_data
-| addrof  : ident → ptrofs → init_data.  /- address of symbol + offset -/
+| addrof  : ident → ptrofs → init_data  /- address of symbol + offset -/
 
 def init_data_size : init_data → ℤ
 | (init_data.int8 _)     := 1
@@ -188,7 +194,7 @@ programs are common to all languages. -/
 inductive globdef (F V : Type) : Type
 | Gfun {} (f : F) : globdef
 | Gvar {} (v : globvar V) : globdef
-export globdef (Gfun Gvar)
+export globdef
 
 structure program (F V : Type) : Type :=
 (prog_defs : list (ident × globdef F V))
@@ -201,13 +207,13 @@ p.prog_defs.map prod.fst
 /- The "definition map" of a program maps names of globals to their definitions.
   If several definitions have the same name, the one appearing last in [p.(prog_defs)] wins. -/
 
-def prog_defmap {F V : Type} (p : program F V) : PTree.t (globdef F V) :=
-PTree.of_list p.prog_defs
-
 section defmap
 
-variables F V : Type
+variables {F V : Type}
 variable p : program F V
+
+def prog_defmap : PTree.t (globdef F V) :=
+PTree.of_list p.prog_defs
 
 lemma in_prog_defmap {id : ident} {g} : (prog_defmap p ^! id) = some g →
   (id, g) ∈ p.prog_defs := sorry
@@ -226,6 +232,73 @@ lemma prog_defmap_nodup {id : ident} {g} :
   (prog_defmap p ^! id) = some g := sorry
 
 end defmap
+
+/- * Generic transformations over programs -/
+
+/- We now define a general iterator over programs that applies a given
+  code transformation function to all function descriptions and leaves
+  the other parts of the program unchanged. -/
+
+section transf_program
+
+parameters {A B V : Type} (transf : A → B)
+
+def transform_program_globdef : ident × globdef A V → ident × globdef B V
+| (id, Gfun f) := (id, Gfun (transf f))
+| (id, Gvar v) := (id, Gvar v)
+
+def transform_program : program A V → program B V
+| ⟨defs, pub, main⟩ := ⟨defs.map transform_program_globdef, pub, main⟩
+
+end transf_program
+
+/- The following is a more general presentation of [transform_program]:
+- Global variable information can be transformed, in addition to function
+  definitions.
+- The transformation functions can fail and return an error message.
+- The transformation for function definitions receives a global context
+  (derived from the compilation unit being transformed) as additiona
+  argument.
+- The transformation functions receive the name of the global as
+  additional argument. -/
+
+section transf_program_gen
+
+parameters {A B V W : Type}
+parameter transf_fun : ident → A → res B.
+parameter transf_var : ident → V → res W.
+
+def transf_globvar (i : ident) : globvar V → res (globvar W)
+| ⟨info, init, ro, vo⟩ := do info' ← transf_var i info, OK ⟨info', init, ro, vo⟩
+
+def transf_globdefs : list (ident × globdef A V) → res (list (ident × globdef B W))
+| [] := OK []
+| ((id, Gfun f) :: l') :=
+  match transf_fun id f with
+  | error msg := error (MSG "In function " :: CTX id :: MSG ": " :: msg)
+  | OK tf :=
+      do tl' ← transf_globdefs l', OK ((id, Gfun tf) :: tl')
+  end
+| ((id, Gvar v) :: l') :=
+  match transf_globvar id v with
+  | error msg := error (MSG "In variable " :: CTX id :: MSG ": " :: msg)
+  | OK tv :=
+      do tl' ← transf_globdefs l', OK ((id, Gvar tv) :: tl')
+  end
+
+def transform_partial_program2 : program A V → res (program B W)
+| ⟨defs, pub, main⟩ := do gl' ← transf_globdefs defs, OK ⟨gl', pub, main⟩
+
+end transf_program_gen
+
+/- The following is a special case of [transform_partial_program2],
+  where only function definitions are transformed, but not variable definitions. -/
+
+def transform_partial_program {A B V} (transf_fun : A → res B) : program A V → res (program B V) :=
+transform_partial_program2 (λ i, transf_fun) (λ i, OK)
+
+lemma transform_program_partial_program {A B V} (transf_fun: A → B) (p: program A V) :
+  transform_partial_program (λ f, OK (transf_fun f)) p = OK (transform_program transf_fun p) := sorry
 
 /- * External functions -/
 
@@ -320,12 +393,161 @@ def ef_inline : external_function → bool
 /- Whether an external function must reload its arguments. -/
 
 def ef_reloads : external_function → bool
-| (EF_annot text targs) := ff
+| (EF_annot text targs)      := ff
 | (EF_debug kind text targs) := ff
-| _ := tt
+| _                          := tt
 
 /- Equality between external functions.  Used in module [Allocation]. -/
 
 instance external_function_eq : decidable_eq external_function := by tactic.mk_dec_eq_instance
+
+/- Function definitions are the union of internal and external functions. -/
+
+inductive fundef (F : Type) : Type
+| Internal {} : F → fundef
+| External {} : external_function → fundef
+open fundef
+
+section transf_fundef
+
+parameters {A B : Type} (transf : A → B)
+
+def transf_fundef : fundef A → fundef B
+| (Internal f)  := Internal (transf f)
+| (External ef) := External ef
+
+end transf_fundef
+
+section transf_partial_fundef
+
+parameters {A B : Type} (transf_partial : A → res B)
+
+def transf_partial_fundef : fundef A → res (fundef B)
+| (Internal f)  := do f' ← transf_partial f, OK (Internal f')
+| (External ef) := OK (External ef)
+
+end transf_partial_fundef
+
+/- * Register pairs -/
+
+/- In some intermediate languages (LTL, Mach), 64-bit integers can be
+  split into two 32-bit halves and held in a pair of registers.  
+  Syntactically, this is captured by the type [rpair] below. -/
+
+inductive rpair (A : Type) : Type
+| One (r : A) : rpair
+| Twolong (rhi rlo : A) : rpair
+open rpair
+
+def typ_rpair {A} (typ_of : A → typ) : rpair A → typ
+| (One r) := typ_of r
+| (Twolong rhi rlo) := Tlong
+
+def map_rpair {A B} (f: A → B) : rpair A → rpair B
+| (One r) := One (f r)
+| (Twolong rhi rlo) := Twolong (f rhi) (f rlo)
+
+def regs_of_rpair {A} : rpair A → list A
+| (One r) := [r]
+| (Twolong rhi rlo) := [rhi, rlo]
+
+def regs_of_rpairs {A} : list (rpair A) → list A
+| [] := []
+| (p :: l) := regs_of_rpair p ++ regs_of_rpairs l
+
+lemma in_regs_of_rpair {A} (x : A) (p) (hm : x ∈ regs_of_rpair p) (l : list (rpair A)) (hp : p ∈ l) :
+  x ∈ regs_of_rpairs l := sorry
+
+lemma in_regs_of_rpairs_inv {A} (x: A) (l : list (rpair A)) (hm : x ∈ regs_of_rpairs l) :
+  ∃ p, p ∈ l ∧ x ∈ regs_of_rpair p := sorry
+
+def forall_rpair {A} (P : A → Prop) : rpair A → Prop
+| (One r) := P r
+| (Twolong rhi rlo) := P rhi ∧ P rlo
+
+/- * Arguments and results to builtin functions -/
+
+inductive builtin_arg (A : Type) : Type
+| BA            {} (x : A)                                            : builtin_arg
+| BA_int        {} (n : int)                                          : builtin_arg
+| BA_long       {} (n : int64)                                        : builtin_arg
+| BA_float      {} (f : float)                                        : builtin_arg
+| BA_single     {} (f : float32)                                      : builtin_arg
+| BA_loadstack  {} (chunk : memory_chunk) (ofs : ptrofs)              : builtin_arg
+| BA_addrstack  {} (ofs : ptrofs)                                     : builtin_arg
+| BA_loadglobal {} (chunk : memory_chunk) (id : ident) (ofs : ptrofs) : builtin_arg
+| BA_addrglobal {} (id : ident) (ofs : ptrofs)                        : builtin_arg
+| BA_splitlong  {} (hi lo : builtin_arg)                              : builtin_arg
+export builtin_arg
+
+inductive builtin_res (A : Type) : Type
+| BR           {} (x : A)               : builtin_res
+| BR_none      {}                       : builtin_res
+| BR_splitlong {} (hi lo : builtin_res) : builtin_res
+open builtin_res
+
+def globals_of_builtin_arg {A : Type} : builtin_arg A → list ident
+| (BA_loadglobal chunk id ofs) := [id]
+| (BA_addrglobal id ofs)       := [id]
+| (BA_splitlong hi lo)         := globals_of_builtin_arg hi ++ globals_of_builtin_arg lo
+| _ := []
+
+def globals_of_builtin_args {A} (al : list (builtin_arg A)) : list ident :=
+al.foldr (λ a l, globals_of_builtin_arg a ++ l) []
+
+def params_of_builtin_arg {A} : builtin_arg A → list A
+| (BA x) := [x]
+| (BA_splitlong hi lo) := params_of_builtin_arg hi ++ params_of_builtin_arg lo
+| _ := []
+
+def params_of_builtin_args {A} (al : list (builtin_arg A)) : list A :=
+al.foldr (λ a l, params_of_builtin_arg a ++ l) []
+
+def params_of_builtin_res {A} : builtin_res A → list A
+| (BR x)               := [x]
+| BR_none              := []
+| (BR_splitlong hi lo) := params_of_builtin_res hi ++ params_of_builtin_res lo
+
+def map_builtin_arg {A B} (f : A → B) : builtin_arg A → builtin_arg B
+| (BA x)                       := BA (f x)
+| (BA_int n)                   := BA_int n
+| (BA_long n)                  := BA_long n
+| (BA_float n)                 := BA_float n
+| (BA_single n)                := BA_single n
+| (BA_loadstack chunk ofs)     := BA_loadstack chunk ofs
+| (BA_addrstack ofs)           := BA_addrstack ofs
+| (BA_loadglobal chunk id ofs) := BA_loadglobal chunk id ofs
+| (BA_addrglobal id ofs)       := BA_addrglobal id ofs
+| (BA_splitlong hi lo)         := BA_splitlong (map_builtin_arg hi) (map_builtin_arg lo)
+
+def map_builtin_res {A B} (f : A → B) : builtin_res A → builtin_res B
+| (BR x)               := BR (f x)
+| BR_none              := BR_none
+| (BR_splitlong hi lo) := BR_splitlong (map_builtin_res hi) (map_builtin_res lo)
+
+/- Which kinds of builtin arguments are supported by which external function. -/
+
+inductive builtin_arg_constraint : Type
+| OK_default
+| OK_const
+| OK_addrstack
+| OK_addrglobal
+| OK_addrany
+| OK_all
+open builtin_arg_constraint
+
+def builtin_arg_ok {A} : builtin_arg A → builtin_arg_constraint → bool
+| (BA _)                       _             := tt
+| (BA_splitlong (BA _) (BA _)) _             := tt
+| (BA_int _)                   OK_const      := tt
+| (BA_long _)                  OK_const      := tt
+| (BA_float _)                 OK_const      := tt
+| (BA_single _)                OK_const      := tt
+| (BA_addrstack _)             OK_addrstack  := tt
+| (BA_addrstack _)             OK_addrany    := tt
+| (BA_addrglobal _ _)          OK_addrglobal := tt
+| (BA_addrglobal _ _)          OK_addrany    := tt
+| _                            OK_all        := tt
+| _                            _             := ff
 
 end ast
