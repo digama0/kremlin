@@ -1,4 +1,7 @@
+import .ctypes
+
 namespace clight
+open ast ctypes integers
 
 inductive expr : Type
   | Econst_int: int -> type -> expr       /- integer literal -/
