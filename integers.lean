@@ -993,6 +993,22 @@ instance ptrofs.decidable_linear_order : decidable_linear_order ptrofs := Int.de
 
 namespace int64
 
+def is_power2 (x : int64) : option int32 :=
+ucoe <$> is_power2 x
+
+lemma is_power2_rng (n logn) : is_power2 n = some logn → unsigned logn < 64 := sorry
+
+theorem is_power2_range (n logn) : is_power2 n = some logn → Int.ltu logn 32 := sorry
+
+lemma is_power2_correct (n logn) : is_power2 n = some logn →
+  unsigned n = 2^unsigned logn := sorry
+   
+theorem mul_pow2 (x n logn) : is_power2 n = some logn →
+  x * n = Int.shl x (ucoe logn) := sorry
+
+theorem divu_pow2 (x n logn) : is_power2 n = some logn →
+  Int.divu x n = Int.shru x (ucoe logn) := sorry
+
 /- Decomposing 64-bit ints as pairs of 32-bit ints -/
 
 def loword (n : int64) : int32 := ucoe n
@@ -1090,7 +1106,7 @@ end int64
 
 namespace ptrofs
 
-def to_int32 (x : ptrofs) : int32 := ucoe x
+def to_int (x : ptrofs) : int32 := ucoe x
 
 def to_int64 (x : ptrofs) : int64 := ucoe x
 

@@ -269,3 +269,22 @@ inductive list.forall2 {A B} (P : A → B → Prop) : list A → list B → Prop
 | cons {a1 al b1 bl} : P a1 b1 →
   list.forall2 al bl →
   list.forall2 (a1 :: al) (b1 :: bl)
+
+theorem list.forall2.imp {A} {P Q : A → A → Prop} (H : ∀ x y, P x y → Q x y)
+  {l1 l2} (al : list.forall2 P l1 l2) : list.forall2 Q l1 l2 :=
+by induction al; constructor; try {assumption}; apply H; assumption
+
+theorem list.forall2.iff {A} {P Q : A → A → Prop} (H : ∀ x y, P x y ↔ Q x y)
+  {l1 l2} : list.forall2 P l1 l2 ↔ list.forall2 Q l1 l2 :=
+⟨λh, h.imp (λx y, (H x y).1), λh, h.imp (λx y, (H x y).2)⟩
+
+theorem list.forall2.trans {A} {P : A → A → Prop} (t : transitive P) : transitive (list.forall2 P) :=
+begin
+  intros x y z h12, revert z,
+  induction h12 with a1 l1 a2 l2 p12 al12 IH; intros z h23,
+  assumption,
+  cases h23 with _ _ a3 l3 p23 al23,
+  constructor,
+  exact t p12 p23,
+  exact IH al23
+end
