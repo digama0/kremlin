@@ -44,8 +44,6 @@ def max_unsigned : ℕ := modulus - 1
 def max_signed : ℕ := half_modulus - 1
 def min_signed : ℤ := - half_modulus
 
-theorem wordsize_pos : (wordsize:ℤ) > 0 := int.coe_nat_lt_coe_nat_of_lt wordsize_pos
-
 theorem modulus_pos : modulus > 0 := nat.pos_pow_of_pos _ dec_trivial
 
 theorem succ_max_unsigned : nat.succ max_unsigned = modulus :=
@@ -957,26 +955,26 @@ def ucoe {w w'} (x : @Int w) : @Int w' := repr (unsigned x)
 
 /- * Specialization to integers of size 8, 32, and 64 bits -/
 
-def wordsize_8 : ℕ+ := ⟨8, dec_trivial⟩
-def wordsize_32 : ℕ+ := ⟨32, dec_trivial⟩
-def wordsize_64 : ℕ+ := ⟨64, dec_trivial⟩
-def ptrofs.wordsize : ℕ+ := if archi.ptr64 then wordsize_64 else wordsize_32
+def W8 : ℕ+ := ⟨8, dec_trivial⟩
+def W32 : ℕ+ := ⟨32, dec_trivial⟩
+def W64 : ℕ+ := ⟨64, dec_trivial⟩
+def ptrofs.wordsize : ℕ+ := if archi.ptr64 then W64 else W32
 
-def byte := @Int wordsize_8
-def int32 := @Int wordsize_32
-def int64 := @Int wordsize_64
+def byte := @Int W8
+def int32 := @Int W32
+def int64 := @Int W64
 def ptrofs := @Int ptrofs.wordsize
 
 theorem byte.wordsize_dvd_modulus :
-  @wordsize wordsize_8 ∣ @modulus wordsize_8 :=
+  @wordsize W8 ∣ @modulus W8 :=
 wordsize_dvd_modulus 3 rfl
 
 theorem int32.wordsize_dvd_modulus :
-  @wordsize wordsize_32 ∣ @modulus wordsize_32 :=
+  @wordsize W32 ∣ @modulus W32 :=
 wordsize_dvd_modulus 5 rfl
 
 theorem int64.wordsize_dvd_modulus :
-  @wordsize wordsize_64 ∣ @modulus wordsize_64 :=
+  @wordsize W64 ∣ @modulus W64 :=
 wordsize_dvd_modulus 6 rfl
 
 theorem ptrofs.wordsize_dvd_modulus :

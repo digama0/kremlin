@@ -68,6 +68,8 @@ def pos_num.one_bits : pos_num → nat → list nat
 | (pos_num.bit0 p) d := pos_num.one_bits p (d+1)
 | (pos_num.bit1 p) d := d :: pos_num.one_bits p (d+1)
 
+lemma pos_num.lor_self (x y) : pos_num.lor (pos_num.lor x y) y = pos_num.lor x y := sorry
+
 def num.size' (a : num) : num :=
 num.rec_on a 0 (λ p, pos_num.size p)
 
@@ -250,10 +252,13 @@ lemma align_le (x y) (h : y > 0) : x ≤ align x y := sorry
 
 lemma align_dvd (x y : ℤ) (h : y > 0) : y ∣ align x y := sorry
 
-/- Coq types which we don't have -/
-def float32 : Type := sorry
+def ordering.swap : ordering → ordering
+| ordering.lt := ordering.gt
+| ordering.eq := ordering.eq
+| ordering.gt := ordering.lt
 
-def float : Type := sorry
+theorem ordering.swap_swap (o : ordering) : o.swap.swap = o :=
+by cases o; refl
 
 inductive option.rel {A B} (R: A → B → Prop) : option A → option B → Prop
 | none : option.rel none none
