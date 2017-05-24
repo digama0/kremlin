@@ -1,7 +1,7 @@
-import .lib .integers .maps .errors
+import .lib .integers .floats .maps .errors
 
 namespace ast
-open integers maps errors
+open integers maps errors floats
 
 /- * Syntactic elements -/
 

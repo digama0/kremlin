@@ -1,5 +1,7 @@
 import algebra.ring data.hash_map
 
+meta def exact_dec_trivial : tactic unit := `[exact dec_trivial]
+
 instance : has_coe ℕ+ ℕ := ⟨λn, n.1⟩
 
 def num.bit0 : num → num
@@ -72,8 +74,6 @@ lemma pos_num.lor_self (x y) : pos_num.lor (pos_num.lor x y) y = pos_num.lor x y
 
 def num.size' (a : num) : num :=
 num.rec_on a 0 (λ p, pos_num.size p)
-
-def num.log2 (a : num) : num := num.pred (num.size a)
 
 def num.lor : num → num → num
 | 0           q           := q
@@ -288,3 +288,30 @@ begin
   exact t p12 p23,
   exact IH al23
 end
+
+/- * Comparisons -/
+
+inductive comparison : Type
+| Ceq : comparison    /- same -/
+| Cne : comparison    /- different -/
+| Clt : comparison    /- less than -/
+| Cle : comparison    /- less than or equal -/
+| Cgt : comparison    /- greater than -/
+| Cge : comparison    /- greater than or equal -/
+export comparison
+
+def negate_comparison : comparison → comparison
+| Ceq := Cne
+| Cne := Ceq
+| Clt := Cge
+| Cle := Cgt
+| Cgt := Cle
+| Cge := Clt
+
+def swap_comparison : comparison → comparison
+| Ceq := Ceq
+| Cne := Cne
+| Clt := Cgt
+| Cle := Cge
+| Cgt := Clt
+| Cge := Cle
