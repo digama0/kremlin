@@ -68,6 +68,11 @@ def pos_num.one_bits : pos_num → nat → list nat
 | (pos_num.bit0 p) d := pos_num.one_bits p (d+1)
 | (pos_num.bit1 p) d := d :: pos_num.one_bits p (d+1)
 
+def num.size' (a : num) : num :=
+num.rec_on a 0 (λ p, pos_num.size p)
+
+def num.log2 (a : num) : num := num.pred (num.size a)
+
 def num.lor : num → num → num
 | 0           q           := q
 | p           0           := p
@@ -132,6 +137,18 @@ def nat.shiftl (m n : ℕ) : ℕ := num.shiftl m n
 def nat.shiftr (m n : ℕ) : ℕ := num.shiftr m n 
 
 def nat.test_bit (m n : ℕ) : bool := num.test_bit m n 
+
+def nat.size (n : ℕ) : ℕ := num.size' n
+
+lemma nat.test_bit_size {x} : 0 < x → nat.test_bit x (nat.size x - 1) := sorry
+
+lemma nat.test_bit_size_lt {x i} : nat.test_bit x i → i < nat.size x := sorry
+
+lemma nat.lt_pow_size (x) : x < 2^nat.size x := sorry
+
+lemma nat.size_le_of_lt_pow {x n} : x < 2^n → nat.size x ≤ n := sorry
+
+lemma nat.size_monotone {x y} : x ≤ y → nat.size x ≤ nat.size y := sorry
 
 def powerseries : list ℕ → ℕ
 | [] := 0
