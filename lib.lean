@@ -206,10 +206,6 @@ def int.test_bit : ℤ → ℕ → bool
 | (m : ℕ) n := nat.test_bit m n
 | -[1+ m] n := bnot (nat.test_bit m n)
 
-def fin.of_int {n} : ℤ → fin (nat.succ n)
-| (m : ℕ) := fin.of_nat m
-| -[1+ m] := ⟨n - m % (nat.succ n), nat.lt_succ_of_le (nat.sub_le _ _)⟩
-
 def int.quot : ℤ → ℤ → ℤ
 | (m : ℕ) (n : ℕ) := (m / n : ℕ)
 | (m : ℕ) -[1+ n] := -(m / nat.succ n : ℕ)
@@ -228,12 +224,13 @@ def int.div : ℤ → ℤ → ℤ
 | -[1+ m] (n : ℕ) := -(nat.succ m / n : ℕ)
 | -[1+ m] -[1+ n] := (nat.succ m / nat.succ n : ℕ)
 
+def int.nat_mod : ℤ → ℕ → ℕ
+| (m : ℕ) n := m % n
+| -[1+ m] n := n - nat.succ (m % n)
+
 def int.mod : ℤ → ℤ → ℤ
-| (m : ℕ) (n : ℕ) := (m % n : ℕ)
-| 0       -[1+ n] := 0
-| (m+1:ℕ) -[1+ n] := -(n - m % nat.succ n : ℕ)
-| -[1+ m] (n : ℕ) := n - nat.succ (m % n)
-| -[1+ m] -[1+ n] := -(nat.succ m % nat.succ n : ℕ)
+| m (n : ℕ) := int.nat_mod m n
+| m -[1+ n] := int.nat_mod (-m) (nat.succ n)
 
 instance : has_div ℤ := ⟨int.div⟩
 instance : has_mod ℤ := ⟨int.mod⟩

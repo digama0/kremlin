@@ -2,15 +2,14 @@ import .lib
 
 /- * Parameterization by the word size, in bits. -/
 
-namespace Int
+namespace word
 section
-variable (n : ℕ+)
+variable (n : ℕ)
 
 def wordsize : ℕ := n
-theorem wordsize_pos : wordsize n > 0 := n.2
 
 def modulus : ℕ := 2^wordsize n
-def half_modulus : ℕ := modulus n / 2
+def half_modulus : ℕ := 2^(wordsize n - 1)
 def max_unsigned : ℕ := modulus n - 1
 def max_signed : ℕ := half_modulus n - 1
 def min_signed : ℤ := - half_modulus n
@@ -20,154 +19,153 @@ theorem modulus_pos : modulus n > 0 := nat.pos_pow_of_pos _ dec_trivial
 theorem succ_max_unsigned : nat.succ (max_unsigned n) = modulus n :=
 nat.succ_pred_eq_of_pos (modulus_pos _)
 end
-end Int
+end word
 
 /- * Representation of machine integers -/
 
-/- A machine integer (type [int]) is represented as a Coq arbitrary-precision
-  integer (type [Z]) plus a proof that it is in the range 0 (included) to
-  [modulus] (excluded). -/
+/- A machine integer (type [word]) is represented as an arbitrary-precision
+  natural number (type [nat]) plus a proof that it is less than [modulus]. -/
 
-def Int (n) := fin (Int.modulus n)
+def word (n) := fin (word.modulus n)
 
-namespace Int
-section
+namespace word
 
-parameter {wordsize_pnat : ℕ+}
+def repr {w} (x : ℤ) : word w :=
+⟨x.nat_mod (modulus w), sorry⟩
 
-local notation `wordsize` := wordsize wordsize_pnat
-local notation `modulus` := modulus wordsize_pnat
-local notation `half_modulus` := half_modulus wordsize_pnat
-local notation `max_unsigned` := max_unsigned wordsize_pnat
-local notation `max_signed` := max_signed wordsize_pnat
-local notation `min_signed` := min_signed wordsize_pnat
-local notation `Int` := Int wordsize_pnat
+instance coe_int_word {w} : has_coe ℤ (word w) := ⟨repr⟩
 
 /- The [unsigned] and [signed] functions return the Coq integer corresponding
   to the given machine integer, interpreted as unsigned or signed
   respectively. -/
 
-def unsigned (n : Int) : ℕ := n.1
+def unsigned {w} (n : word w) : ℕ := n.1
 
-def signed (n : Int) : ℤ :=
-let x := unsigned n in    
+section
+
+parameter {wordsize : ℕ}
+
+local notation `modulus` := modulus wordsize
+local notation `half_modulus` := half_modulus wordsize
+local notation `max_unsigned` := max_unsigned wordsize
+local notation `max_signed` := max_signed wordsize
+local notation `min_signed` := min_signed wordsize
+local notation `word` := word wordsize
+local notation `repr` := @repr wordsize
+local notation `unsigned` := @unsigned wordsize
+
+def signed (n : word) : ℤ :=
+let x := unsigned n in
 if x < half_modulus then x else x - modulus
-instance coe_Int_int : has_coe Int ℤ := ⟨signed⟩
+instance coe_word_int : has_coe word ℤ := ⟨signed⟩
 
 /- Conversely, [repr] takes a Coq integer and returns the corresponding
   machine integer.  The argument is treated modulo [modulus]. -/
-
-def repr (x : ℤ) : Int :=
-show fin modulus, by rw -succ_max_unsigned; exact fin.of_int x
-instance coe_int_Int : has_coe ℤ Int := ⟨repr⟩
 
 def in_srange (x : ℤ) : bool := min_signed ≤ x ∧ x < half_modulus
 def in_urange (x : ℤ) : bool := 0 ≤ x ∧ x < modulus
 
 def iwordsize := repr wordsize
 
-instance : has_zero Int := ⟨repr 0⟩
-instance : has_one Int := ⟨repr 1⟩
+instance : has_zero word := ⟨repr 0⟩
+instance : has_one word := ⟨repr 1⟩
 
-instance eq_dec : decidable_eq Int := by tactic.mk_dec_eq_instance
+instance eq_dec : decidable_eq word := by tactic.mk_dec_eq_instance
 
 /- * Arithmetic and logical operations over machine integers -/
 
-def ltu (x y : Int) : Prop := unsigned x < unsigned y
-instance : has_lt Int := ⟨λx y, signed x < signed y⟩
-instance : has_le Int := ⟨λx y, signed x ≤ signed y⟩
+def ltu (x y : word) : Prop := unsigned x < unsigned y
+instance : has_lt word := ⟨λx y, signed x < signed y⟩
+instance : has_le word := ⟨λx y, signed x ≤ signed y⟩
 
-protected def neg (x : Int) : Int := repr (-unsigned x)
-instance : has_neg Int := ⟨Int.neg⟩
+protected def neg (x : word) : word := repr (-unsigned x)
+instance : has_neg word := ⟨word.neg⟩
 
-protected def add (x y : Int) : Int := repr (unsigned x + unsigned y)
--- Use group subtraction
---protected def sub (x y : Int) : Int := repr (unsigned x - unsigned y)
-protected def mul (x y : Int) : Int := repr (unsigned x * unsigned y)
-instance : has_add Int := ⟨Int.add⟩
---instance : has_sub Int := ⟨Int.sub⟩
-instance : has_mul Int := ⟨Int.mul⟩
+protected def add (x y : word) : word := repr (unsigned x + unsigned y)
+protected def mul (x y : word) : word := repr (unsigned x * unsigned y)
+instance : has_add word := ⟨word.add⟩
+instance : has_mul word := ⟨word.mul⟩
 
-def divs (x y : Int) : Int := repr (int.quot (signed x) (signed y))
-def mods (x y : Int) : Int := repr (int.rem  (signed x) (signed y))
-instance : has_div Int := ⟨divs⟩
-instance : has_mod Int := ⟨mods⟩
+def divs (x y : word) : word := repr (int.quot (signed x) (signed y))
+def mods (x y : word) : word := repr (int.rem  (signed x) (signed y))
+instance : has_div word := ⟨divs⟩
+instance : has_mod word := ⟨mods⟩
 
-def divu (x y : Int) : Int := repr (unsigned x / unsigned y : ℕ)
-def modu (x y : Int) : Int := repr (unsigned x % unsigned y : ℕ)
+def divu (x y : word) : word := repr (unsigned x / unsigned y : ℕ)
+def modu (x y : word) : word := repr (unsigned x % unsigned y : ℕ)
 
 /- Bitwise boolean operations. -/
 
-protected def and (x y : Int) : Int := repr (int.land (unsigned x) (unsigned y))
-protected def or  (x y : Int) : Int := repr (int.lor  (unsigned x) (unsigned y))
-protected def xor (x y : Int) : Int := repr (int.lxor (unsigned x) (unsigned y))
+protected def and (x y : word) : word := repr (int.land (unsigned x) (unsigned y))
+protected def or  (x y : word) : word := repr (int.lor  (unsigned x) (unsigned y))
+protected def xor (x y : word) : word := repr (int.lxor (unsigned x) (unsigned y))
 
-protected def not (x : Int) : Int := repr (int.lnot (unsigned x))
+protected def not (x : word) : word := repr (int.lnot (unsigned x))
 
 /- Shifts and rotates. -/
 
-def shl  (x y : Int) : Int := repr (int.shiftl (unsigned x) (unsigned y))
-def shru (x y : Int) : Int := repr (int.shiftr (unsigned x) (unsigned y))
-def shr  (x y : Int) : Int := repr (int.shiftr (signed x)   (unsigned y))
+def shl  (x y : word) : word := repr (int.shiftl (unsigned x) (unsigned y))
+def shru (x y : word) : word := repr (int.shiftr (unsigned x) (unsigned y))
+def shr  (x y : word) : word := repr (int.shiftr (signed x)   (unsigned y))
 
-def rol (x y : Int) : Int :=
+def rol (x y : word) : word :=
 let n := unsigned y % wordsize in
 repr (int.lor (int.shiftl (unsigned x) n) (int.shiftr (unsigned x) (wordsize - n)))
-def ror (x y : Int) : Int :=
+def ror (x y : word) : word :=
 let n := unsigned y % wordsize in
 repr (int.lor (int.shiftr (unsigned x) n) (int.shiftl (unsigned x) (wordsize - n)))
 
-def rolm (x a m : Int) : Int := Int.and (rol x a) m
+def rolm (x a m : word) : word := word.and (rol x a) m
 
 /- Viewed as signed divisions by powers of two, [shrx] rounds towards
   zero, while [shr] rounds towards minus infinity. -/
 
-def shrx (x y : Int) : Int := x / shl 1 y
+def shrx (x y : word) : word := x / shl 1 y
 
 /- High half of full multiply. -/
 
-def mulhu (x y : Int) : Int := repr ((unsigned x * unsigned y) / modulus)
-def mulhs (x y : Int) : Int := repr ((signed x * signed y) / modulus)
+def mulhu (x y : word) : word := repr ((unsigned x * unsigned y) / modulus)
+def mulhs (x y : word) : word := repr ((signed x * signed y) / modulus)
 
-instance coe_bool_Int : has_coe bool Int := ⟨λb, cond b 1 0⟩
+instance coe_bool_word : has_coe bool word := ⟨λb, cond b 1 0⟩
 
 /- Condition flags -/
 
-def negative (x : Int) : Int := to_bool (x < 0)
+def negative (x : word) : word := to_bool (x < 0)
 
-def add_carry (x y cin : Int) : Int :=
+def add_carry (x y cin : word) : word :=
 to_bool (unsigned x + unsigned y + unsigned cin ≥ modulus)
 
-def add_overflow (x y cin : Int) : Int :=
+def add_overflow (x y cin : word) : word :=
 bnot $ in_srange (signed x + signed y + signed cin)
 
-def sub_borrow (x y bin : Int) : Int :=
+def sub_borrow (x y bin : word) : word :=
 to_bool (unsigned x - unsigned y - unsigned bin < 0)
 
-def sub_overflow (x y bin : Int) : Int :=
+def sub_overflow (x y bin : word) : word :=
 bnot $ in_srange (signed x - signed y - signed bin)
 
 /- [shr_carry x y] is 1 if [x] is negative and at least one 1 bit is shifted away. -/
 
-def shr_carry (x y : Int) : Int :=
+def shr_carry (x y : word) : word :=
 to_bool (x < 0 ∧ and x (shl 1 y + -1) ≠ 0)
 
 /- Zero and sign extensions -/
 
-def zero_ext (n : ℕ) (x : Int) : Int := repr (unsigned x % 2^n)
+def zero_ext (n : ℕ) (x : word) : word := repr (unsigned x % 2^n)
 
-def sign_ext (n : ℕ+) (x : Int) : Int :=
+def sign_ext (n : ℕ+) (x : word) : word :=
 let modulus' := 2^n.1, y := unsigned x % modulus' in    
 repr (if y < modulus'/2 then y else y - modulus')
 
 /- Decomposition of a number as a sum of powers of two. -/
 
-def one_bits (x : Int) : list Int :=
+def one_bits (x : word) : list word :=
 (num.one_bits (unsigned x)).map (λx:ℕ, repr x) 
 
 /- Recognition of powers of two. -/
 
-def is_power2 (x : Int) : option Int :=
+def is_power2 (x : word) : option word :=
 match num.one_bits (unsigned x) with
 | [i] := some (repr i)
 | _ := none
@@ -175,11 +173,11 @@ end
 
 /- Comparisons. -/
 
-instance decidable_lt : @decidable_rel Int (<) := by apply_instance
-instance decidable_le : @decidable_rel Int (≤) := by apply_instance
+instance decidable_lt : @decidable_rel word (<) := by apply_instance
+instance decidable_le : @decidable_rel word (≤) := by apply_instance
 instance decidable_ltu : decidable_rel ltu := by delta ltu; apply_instance
 
-def cmp : comparison → Int → Int → bool
+def cmp : comparison → word → word → bool
 | Ceq x y := x = y
 | Cne x y := x ≠ y
 | Clt x y := x < y
@@ -187,7 +185,7 @@ def cmp : comparison → Int → Int → bool
 | Cgt x y := y < x
 | Cge x y := y ≤ x
 
-def cmpu : comparison → Int → Int → bool
+def cmpu : comparison → word → word → bool
 | Ceq x y := x = y
 | Cne x y := x ≠ y
 | Clt x y := ltu x y
@@ -195,33 +193,37 @@ def cmpu : comparison → Int → Int → bool
 | Cgt x y := ltu y x
 | Cge x y := bnot (ltu x y)
 
-def is_false (x : Int) : Prop := x = 0
-def is_true  (x : Int) : Prop := x ≠ 0
-def notbool  (x : Int) : Int  := to_bool (x = 0)
+def is_false (x : word) : Prop := x = 0
+def is_true  (x : word) : Prop := x ≠ 0
+def notbool  (x : word) : word  := to_bool (x = 0)
 
 /- x86-style extended division and modulus -/
 
-def divmodu2 (nhi nlo : Int) (d : Int) : option (Int × Int) :=
+def divmodu2 (nhi nlo : word) (d : word) : option (word × word) :=
 if d = 0 then none else
   let q := unsigned nhi * modulus + unsigned nlo / unsigned d in
   if q < modulus then
     some (repr q, repr (unsigned nhi * modulus + unsigned nlo % unsigned d))
   else none
 
-def divmods2 (nhi nlo : Int) (d : Int) : option (Int × Int) :=
+def divmods2 (nhi nlo : word) (d : word) : option (word × word) :=
 if d = 0 then none else
   let q := int.quot (signed nhi * modulus + unsigned nlo) (signed d) in
   if in_srange q then
     some (repr q, repr (int.rem (signed nhi * modulus + unsigned nlo) (signed d)))
   else none
 
+/- Encode and decode from an integer -/
+
+def words_of_int : ℕ → ℤ → list word
+| 0       x := []
+| (m + 1) x := repr x :: words_of_int m (x / modulus)
+
+def nat_of_words : list word → ℕ
+| []        := 0
+| (b :: l') := unsigned b + nat_of_words l' * modulus
+
 /- * Properties of integers and integer arithmetic -/
-
-/- ** Properties of [modulus], [max_unsigned], etc. -/
-
-theorem half_modulus_power : half_modulus = 2^(wordsize - 1) := sorry
-
-theorem half_modulus_modulus : modulus = 2 * half_modulus := sorry
 
 /- Relative positions, from greatest to smallest:
 <<
@@ -234,7 +236,7 @@ theorem half_modulus_modulus : modulus = 2 * half_modulus := sorry
 >>
 -/
 
-theorem half_modulus_pos : half_modulus > 0 := sorry
+theorem half_modulus_pos : half_modulus > 0 := nat.pos_pow_of_pos _ dec_trivial
 
 theorem min_signed_neg : min_signed < 0 := sorry
 
@@ -244,10 +246,14 @@ theorem two_wordsize_max_unsigned : 2 * wordsize - 1 ≤ max_unsigned := sorry
 
 theorem max_signed_unsigned : max_signed < max_unsigned := sorry
 
-lemma unsigned_repr_eq (x) : (unsigned (repr x) : ℤ) = x % modulus := sorry
+@[simp] lemma unsigned_repr_eq (x) : unsigned (repr x) = x.nat_mod modulus := sorry
 
 lemma signed_repr_eq (x) : signed (repr x) =
   if x % modulus < half_modulus then x % modulus else x % modulus - modulus := sorry
+
+lemma mod_eq_of_repr_eq {x y} (h : repr x = repr y) : x % modulus = y % modulus :=
+let t := congr_arg (λx, (unsigned x : ℤ)) h in
+by simp at t; simp [t]
 
 theorem unsigned_range (i) : unsigned i < modulus := sorry
 
@@ -257,13 +263,13 @@ theorem min_signed_range (i) : min_signed ≤ signed i := sorry
 
 theorem max_signed_range (i) : signed i ≤ max_signed := sorry
 
-theorem repr_unsigned (i) : repr (unsigned i) = i := sorry
+@[simp] theorem repr_unsigned (i) : repr (unsigned i) = i := sorry
 
-lemma repr_signed (i) : repr (signed i) = i := sorry
+@[simp] theorem repr_signed (i) : repr (signed i) = i := sorry
 
-theorem unsigned_repr (z) : z ≤ max_unsigned → unsigned (repr z) = z := sorry
+theorem unsigned_repr {z} (h : z ≤ max_unsigned) : unsigned (repr z) = z := sorry
 
-theorem signed_repr (z) : min_signed ≤ z → z ≤ max_signed → signed (repr z) = z := sorry
+theorem signed_repr {z} : min_signed ≤ z → z ≤ max_signed → signed (repr z) = z := sorry
 
 theorem signed_eq_unsigned (x) : unsigned x ≤ max_signed → signed x = unsigned x := sorry
 
@@ -273,15 +279,11 @@ theorem signed_positive (x) : 0 ≤ signed x ↔ unsigned x ≤ max_signed := so
 
 theorem unsigned_zero : unsigned 0 = 0 := sorry
 
-theorem unsigned_one : unsigned 1 = 1 := sorry
-
 theorem unsigned_mone : unsigned (-1) = modulus - 1 := sorry
 
 theorem signed_zero : signed 0 = 0 := sorry
 
 theorem signed_mone : signed (-1) = -1 := sorry
-
-theorem one_ne_zero : (1:Int) ≠ 0 := sorry
 
 theorem unsigned_repr_wordsize : unsigned iwordsize = wordsize := sorry
 
@@ -297,13 +299,13 @@ theorem add_unsigned (x y) : x + y = repr (unsigned x + unsigned y) := sorry
 
 theorem add_signed (x y) : x + y = repr (signed x + signed y) := sorry
 
-theorem add_comm (x y : Int) : x + y = y + x := sorry
+theorem add_comm (x y : word) : x + y = y + x := sorry
 
-theorem add_zero (x : Int) : x + 0 = x := sorry
+theorem add_zero (x : word) : x + 0 = x := sorry
 
-theorem add_assoc (x y z : Int) : (x + y) + z = x + (y + z) := sorry
+theorem add_assoc (x y z : word) : (x + y) + z = x + (y + z) := sorry
 
-theorem add_left_neg (x : Int) : -x + x = 0 := sorry
+theorem add_left_neg (x : word) : -x + x = 0 := sorry
 
 theorem unsigned_add_carry (x y) :
   unsigned (x + y) = unsigned x + unsigned y - unsigned (add_carry x y 0) * modulus := sorry
@@ -318,17 +320,17 @@ theorem neg_repr (z) : -(repr z) = repr (-z) := sorry
 
 /- ** Properties of multiplication -/
 
-theorem mul_comm (x y : Int) : x * y = y * x := sorry
+theorem mul_comm (x y : word) : x * y = y * x := sorry
 
-theorem mul_one (x : Int) : x * 1 = x := sorry
+theorem mul_one (x : word) : x * 1 = x := sorry
 
-theorem mul_assoc (x y z : Int) : (x * y) * z = x * (y * z) := sorry
+theorem mul_assoc (x y z : word) : (x * y) * z = x * (y * z) := sorry
 
-theorem right_distrib (x y z : Int) : (x + y) * z = x * z + y * z := sorry
+theorem right_distrib (x y z : word) : (x + y) * z = x * z + y * z := sorry
 
 theorem mul_signed (x y) : x * y = repr (signed x * signed y) := sorry
 
-instance comm_ring : comm_ring Int :=
+instance comm_ring : comm_ring word :=
 { add            := (+),
   add_assoc      := add_assoc,
   zero           := 0,
@@ -362,17 +364,17 @@ lemma divu_add_modu (x y) : y ≠ 0 → divu x y * y + modu x y = x := sorry
 
 theorem modu_divu (x y) : y ≠ 0 → modu x y = x - divu x y * y := sorry
 
-lemma mods_divs_Euclid (x y : Int) : x / y * y + x % y = x := sorry
+lemma mods_divs_Euclid (x y : word) : x / y * y + x % y = x := sorry
 
-theorem mods_divs (x y : Int) : x % y = x - x / y * y := sorry
+theorem mods_divs (x y : word) : x % y = x - x / y * y := sorry
 
 theorem divu_one (x) : divu x 1 = x := sorry
 
 theorem modu_one (x) : modu x 1 = 0 := sorry
 
-theorem divs_mone (x : Int) : x / (-1) = -x := sorry
+theorem divs_mone (x : word) : x / (-1) = -x := sorry
 
-theorem mods_mone (x : Int) : x % (-1) = 0 := sorry
+theorem mods_mone (x : word) : x % (-1) = 0 := sorry
 
 theorem divmodu2_divu_modu (n d) :
   d ≠ 0 → divmodu2 0 n d = some (divu n d, modu n d) := sorry
@@ -388,7 +390,7 @@ theorem divmods2_divs_mods (n d) :
 
 /- ** Bit-level reasoning over type [int] -/
 
-def test_bit (x : Int) (i : ℕ) : bool := int.test_bit (unsigned x) i
+def test_bit (x : word) (i : ℕ) : bool := int.test_bit (unsigned x) i
 
 lemma test_bit_repr (x i) : i < wordsize →
   test_bit (repr x) i = int.test_bit x i := sorry
@@ -418,113 +420,113 @@ lemma bits_le (x y) :
 /- ** Properties of bitwise and, or, xor -/
 
 @[simp] lemma bits_and (x y i) : i < wordsize →
-  test_bit (Int.and x y) i = test_bit x i && test_bit y i := sorry
+  test_bit (word.and x y) i = test_bit x i && test_bit y i := sorry
 
 @[simp] lemma bits_or (x y i) : i < wordsize →
-  test_bit (Int.or x y) i = test_bit x i || test_bit y i := sorry
+  test_bit (word.or x y) i = test_bit x i || test_bit y i := sorry
 
 @[simp] lemma bits_xor (x y i) : i < wordsize →
-  test_bit (Int.xor x y) i = bxor (test_bit x i) (test_bit y i) := sorry
+  test_bit (word.xor x y) i = bxor (test_bit x i) (test_bit y i) := sorry
 
 @[simp] lemma bits_not (x i) : i < wordsize →
-  test_bit (Int.not x) i = bnot (test_bit x i) := sorry
+  test_bit (word.not x) i = bnot (test_bit x i) := sorry
 
-theorem and_comm (x y) : Int.and x y = Int.and y x := sorry
+theorem and_comm (x y) : word.and x y = word.and y x := sorry
 
-theorem and_assoc (x y z) : Int.and (Int.and x y) z = Int.and x (Int.and y z) := sorry
+theorem and_assoc (x y z) : word.and (word.and x y) z = word.and x (word.and y z) := sorry
 
-@[simp] theorem and_zero (x) : Int.and x 0 = 0 := sorry
+@[simp] theorem and_zero (x) : word.and x 0 = 0 := sorry
 
-@[simp] theorem zero_and (x) : Int.and 0 x = 0 := sorry
+@[simp] theorem zero_and (x) : word.and 0 x = 0 := sorry
 
-@[simp] theorem and_mone (x) : Int.and x (-1) = x := sorry
+@[simp] theorem and_mone (x) : word.and x (-1) = x := sorry
 
-@[simp] theorem mone_and (x) : Int.and (-1) x = x := sorry
+@[simp] theorem mone_and (x) : word.and (-1) x = x := sorry
 
 @[simp] theorem and_self (x) : and x x = x := sorry
 
-theorem or_comm (x y) : Int.or x y = Int.or y x := sorry
+theorem or_comm (x y) : word.or x y = word.or y x := sorry
 
-theorem or_assoc (x y z) : Int.or (Int.or x y) z = Int.or x (Int.or y z) := sorry
+theorem or_assoc (x y z) : word.or (word.or x y) z = word.or x (word.or y z) := sorry
 
-@[simp] theorem or_zero (x) : Int.or x 0 = x := sorry
+@[simp] theorem or_zero (x) : word.or x 0 = x := sorry
 
-@[simp] theorem zero_or (x) : Int.or 0 x = x := sorry
+@[simp] theorem zero_or (x) : word.or 0 x = x := sorry
 
-@[simp] theorem or_mone (x) : Int.or x (-1) = -1 := sorry
+@[simp] theorem or_mone (x) : word.or x (-1) = -1 := sorry
 
-@[simp] theorem or_self (x) : Int.or x x = x := sorry
+@[simp] theorem or_self (x) : word.or x x = x := sorry
 
 theorem and_or_left_distrib (x y z) :
-  Int.and x (Int.or y z) = Int.or (Int.and x y) (Int.and x z) := sorry
+  word.and x (word.or y z) = word.or (word.and x y) (word.and x z) := sorry
 
 theorem and_or_right_distrib (x y z) :
-  Int.and (Int.or x y) z = Int.or (Int.and x z) (Int.and y z) := sorry
+  word.and (word.or x y) z = word.or (word.and x z) (word.and y z) := sorry
 
 theorem or_and_left_distrib (x y z) :
-  Int.or x (Int.and y z) = Int.and (Int.or x y) (Int.or x z) := sorry
+  word.or x (word.and y z) = word.and (word.or x y) (word.or x z) := sorry
 
 theorem or_and_right_distrib (x y z) :
-  Int.or (Int.and x y) z = Int.and (Int.or x z) (Int.or y z) := sorry
+  word.or (word.and x y) z = word.and (word.or x z) (word.or y z) := sorry
 
-@[simp] theorem and_or_absorb (x y) : Int.and x (Int.or x y) = x := sorry
+@[simp] theorem and_or_absorb (x y) : word.and x (word.or x y) = x := sorry
 
-@[simp] theorem or_and_absorb (x y) : Int.or x (Int.and x y) = x := sorry
+@[simp] theorem or_and_absorb (x y) : word.or x (word.and x y) = x := sorry
 
-theorem xor_comm (x y) : Int.xor x y = Int.xor y x := sorry
+theorem xor_comm (x y) : word.xor x y = word.xor y x := sorry
 
-theorem xor_assoc (x y z) : Int.xor (Int.xor x y) z = Int.xor x (Int.xor y z) := sorry
+theorem xor_assoc (x y z) : word.xor (word.xor x y) z = word.xor x (word.xor y z) := sorry
 
-@[simp] theorem xor_zero (x) : Int.xor x 0 = x := sorry
+@[simp] theorem xor_zero (x) : word.xor x 0 = x := sorry
 
-@[simp] theorem zero_xor (x) : Int.xor 0 x = x := sorry
+@[simp] theorem zero_xor (x) : word.xor 0 x = x := sorry
 
-@[simp] theorem xor_self (x) : Int.xor x x = 0 := sorry
+@[simp] theorem xor_self (x) : word.xor x x = 0 := sorry
 
-@[simp] theorem xor_zero_one : Int.xor 0 1 = 1 := zero_xor _
+@[simp] theorem xor_zero_one : word.xor 0 1 = 1 := zero_xor _
 
-@[simp] theorem xor_one_one : Int.xor 1 1 = 0 := xor_self _
+@[simp] theorem xor_one_one : word.xor 1 1 = 0 := xor_self _
 
-theorem eq_of_xor_zero (x y) : Int.xor x y = 0 → x = y := sorry
+theorem eq_of_xor_zero (x y) : word.xor x y = 0 → x = y := sorry
 
 theorem and_xor_distrib (x y z) :
-  Int.and x (Int.xor y z) = Int.xor (Int.and x y) (Int.and x z) := sorry
+  word.and x (word.xor y z) = word.xor (word.and x y) (word.and x z) := sorry
 
-theorem and_le (x y) : unsigned (Int.and x y) ≤ unsigned x := sorry
+theorem and_le (x y) : unsigned (word.and x y) ≤ unsigned x := sorry
 
-theorem or_le (x y) : unsigned x ≤ unsigned (Int.or x y) := sorry
+theorem or_le (x y) : unsigned x ≤ unsigned (word.or x y) := sorry
 
 /- Properties of bitwise complement.-/
 
-theorem not_not (x) : Int.not (Int.not x) = x := sorry
+theorem not_not (x) : word.not (word.not x) = x := sorry
 
-theorem not_zero : Int.not 0 = -1 := sorry
+theorem not_zero : word.not 0 = -1 := sorry
 
-theorem not_mone : Int.not (-1) = 0 := sorry
+theorem not_mone : word.not (-1) = 0 := sorry
 
-theorem not_or_and_not (x y) : Int.not (Int.or x y) = Int.and (Int.not x) (Int.not y) := sorry
+theorem not_or_and_not (x y) : word.not (word.or x y) = word.and (word.not x) (word.not y) := sorry
 
-theorem not_and_or_not (x y) : Int.not (Int.and x y) = Int.or (Int.not x) (Int.not y) := sorry
+theorem not_and_or_not (x y) : word.not (word.and x y) = word.or (word.not x) (word.not y) := sorry
 
-theorem and_not_self (x) : Int.and x (Int.not x) = 0 := sorry
+theorem and_not_self (x) : word.and x (word.not x) = 0 := sorry
 
-theorem or_not_self (x) : Int.or x (Int.not x) = -1 := sorry
+theorem or_not_self (x) : word.or x (word.not x) = -1 := sorry
 
-theorem xor_not_self (x) : Int.xor x (Int.not x) = -1 := sorry
+theorem xor_not_self (x) : word.xor x (word.not x) = -1 := sorry
 
-lemma unsigned_not (x) : unsigned (Int.not x) = max_unsigned - unsigned x := sorry
+lemma unsigned_not (x) : unsigned (word.not x) = max_unsigned - unsigned x := sorry
 
-theorem not_neg (x) : Int.not x = -x - 1 := sorry
+theorem not_neg (x) : word.not x = -x - 1 := sorry
 
-theorem neg_not (x) : -x = Int.not x + 1 := sorry
+theorem neg_not (x) : -x = word.not x + 1 := sorry
 
-theorem sub_add_not (x y) : x - y = x + Int.not y + 1 := sorry
+theorem sub_add_not (x y) : x - y = x + word.not y + 1 := sorry
 
 theorem sub_add_not_3 (x y b) : b = 0 ∨ b = 1 →
-  x - y - b = x + Int.not y + Int.xor b 1 := sorry
+  x - y - b = x + word.not y + word.xor b 1 := sorry
 
 theorem sub_borrow_add_carry (x y b) : b = 0 ∨ b = 1 →
-  sub_borrow x y b = Int.xor (add_carry x (Int.not y) (Int.xor b 1)) 1 := sorry
+  sub_borrow x y b = word.xor (add_carry x (word.not y) (word.xor b 1)) 1 := sorry
 
 /- Connections between [add] and bitwise logical operations. -/
 
@@ -532,14 +534,14 @@ lemma Z_add_is_or (i x y) :
   (∀ j ≤ i, int.test_bit x j && int.test_bit y j = ff) →
   int.test_bit (x + y) i = int.test_bit x i || int.test_bit y i := sorry
 
-theorem add_is_or (x y) : Int.and x y = 0 → x + y = Int.or x y := sorry
+theorem add_is_or (x y) : word.and x y = 0 → x + y = word.or x y := sorry
 
-theorem xor_is_or (x y) : Int.and x y = 0 → Int.xor x y = Int.or x y := sorry
+theorem xor_is_or (x y) : word.and x y = 0 → word.xor x y = word.or x y := sorry
 
-theorem add_is_xor (x y) : Int.and x y = 0 → x + y = Int.xor x y := sorry
+theorem add_is_xor (x y) : word.and x y = 0 → x + y = word.xor x y := sorry
 
-theorem add_and (x y z) : Int.and y z = 0 →
-  Int.and x y + Int.and x z = Int.and x (Int.or y z) := sorry
+theorem add_and (x y z) : word.and y z = 0 →
+  word.and x y + word.and x z = word.and x (word.or y z) := sorry
 
 /- ** Properties of shifts -/
 
@@ -554,18 +556,18 @@ theorem add_and (x y z) : Int.and y z = 0 →
 
 @[simp] theorem shl_zero (x) : shl x 0 = x := sorry
 
-lemma bitwise_binop_shl {f : Int → Int → Int} {f' : bool → bool → bool} :
+lemma bitwise_binop_shl {f : word → word → word} {f' : bool → bool → bool} :
   (∀ x y i, i < wordsize → test_bit (f x y) i = f' (test_bit x i) (test_bit y i)) →
   f' ff ff = ff →
   ∀ x y n, f (shl x n) (shl y n) = shl (f x y) n := sorry
 
-theorem and_shl : ∀ x y n, Int.and (shl x n) (shl y n) = shl (Int.and x y) n :=
+theorem and_shl : ∀ x y n, word.and (shl x n) (shl y n) = shl (word.and x y) n :=
 bitwise_binop_shl bits_and rfl
 
-theorem or_shl : ∀ x y n, Int.or (shl x n) (shl y n) = shl (Int.or x y) n :=
+theorem or_shl : ∀ x y n, word.or (shl x n) (shl y n) = shl (word.or x y) n :=
 bitwise_binop_shl bits_or rfl
 
-theorem xor_shl : ∀ x y n, Int.xor (shl x n) (shl y n) = shl (Int.xor x y) n :=
+theorem xor_shl : ∀ x y n, word.xor (shl x n) (shl y n) = shl (word.xor x y) n :=
 bitwise_binop_shl bits_xor rfl
 
 lemma ltu_inv (x y) : ltu x y → unsigned x < unsigned y := sorry
@@ -577,18 +579,18 @@ theorem shl_shl (x y z) : ltu y iwordsize → ltu z iwordsize →
 
 theorem shru_zero (x) : shru x 0 = x := sorry
 
-lemma bitwise_binop_shru {f : Int → Int → Int} {f' : bool → bool → bool} :
+lemma bitwise_binop_shru {f : word → word → word} {f' : bool → bool → bool} :
   (∀ x y i, i < wordsize → test_bit (f x y) i = f' (test_bit x i) (test_bit y i)) →
   f' ff ff = ff →
   ∀ x y n, f (shru x n) (shru y n) = shru (f x y) n := sorry
 
-theorem and_shru : ∀ x y n, Int.and (shru x n) (shru y n) = shru (Int.and x y) n :=
+theorem and_shru : ∀ x y n, word.and (shru x n) (shru y n) = shru (word.and x y) n :=
 bitwise_binop_shru bits_and rfl
 
-theorem or_shru : ∀ x y n, Int.or (shru x n) (shru y n) = shru (Int.or x y) n :=
+theorem or_shru : ∀ x y n, word.or (shru x n) (shru y n) = shru (word.or x y) n :=
 bitwise_binop_shru bits_or rfl
 
-theorem xor_shru : ∀ x y n, Int.xor (shru x n) (shru y n) = shru (Int.xor x y) n :=
+theorem xor_shru : ∀ x y n, word.xor (shru x n) (shru y n) = shru (word.xor x y) n :=
 bitwise_binop_shru bits_xor rfl
 
 theorem shru_shru (x y z) : ltu y iwordsize → ltu z iwordsize →
@@ -596,26 +598,26 @@ theorem shru_shru (x y z) : ltu y iwordsize → ltu z iwordsize →
 
 theorem shr_zero (x) : shr x 0 = x := sorry
 
-lemma bitwise_binop_shr {f : Int → Int → Int} {f' : bool → bool → bool} :
+lemma bitwise_binop_shr {f : word → word → word} {f' : bool → bool → bool} :
   (∀ x y i, i < wordsize → test_bit (f x y) i = f' (test_bit x i) (test_bit y i)) →
   ∀ x y n, f (shr x n) (shr y n) = shr (f x y) n := sorry
 
-theorem and_shr : ∀ x y n, Int.and (shr x n) (shr y n) = shr (Int.and x y) n :=
+theorem and_shr : ∀ x y n, word.and (shr x n) (shr y n) = shr (word.and x y) n :=
 bitwise_binop_shr bits_and
 
-theorem or_shr : ∀ x y n, Int.or (shr x n) (shr y n) = shr (Int.or x y) n :=
+theorem or_shr : ∀ x y n, word.or (shr x n) (shr y n) = shr (word.or x y) n :=
 bitwise_binop_shr bits_or
 
-theorem xor_shr : ∀ x y n, Int.xor (shr x n) (shr y n) = shr (Int.xor x y) n :=
+theorem xor_shr : ∀ x y n, word.xor (shr x n) (shr y n) = shr (word.xor x y) n :=
 bitwise_binop_shr bits_xor
 
 theorem shr_shr (x y z) : ltu y iwordsize → ltu z iwordsize →
   ltu (y + z) iwordsize → shr (shr x y) z = shr x (y + z) := sorry
 
-theorem and_shr_shru (x y z) : Int.and (shr x z) (shru y z) = shru (Int.and x y) z := sorry
+theorem and_shr_shru (x y z) : word.and (shr x z) (shru y z) = shru (word.and x y) z := sorry
 
 theorem shr_and_shru_and (x y z) : shru (shl z y) y = z →
-  Int.and (shr x y) z = Int.and (shru x y) z := sorry
+  word.and (shr x y) z = word.and (shru x y) z := sorry
 
 theorem shru_lt_zero (x) : shru x (repr (wordsize - 1)) = to_bool (x < 0) := sorry
 
@@ -636,36 +638,36 @@ theorem shru_rolm (x n) : ltu n iwordsize →
 
 theorem rol_zero (x) : rol x 0 = x := sorry
 
-lemma bitwise_binop_rol {f : Int → Int → Int} {f' : bool → bool → bool} :
+lemma bitwise_binop_rol {f : word → word → word} {f' : bool → bool → bool} :
   (∀ x y i, i < wordsize → test_bit (f x y) i = f' (test_bit x i) (test_bit y i)) →
   ∀ x y n, rol (f x y) n = f (rol x n) (rol y n) := sorry
 
-theorem rol_and : ∀ x y n, rol (Int.and x y) n = Int.and (rol x n) (rol y n) :=
+theorem rol_and : ∀ x y n, rol (word.and x y) n = word.and (rol x n) (rol y n) :=
 bitwise_binop_rol bits_and
 
-theorem rol_or : ∀ x y n, rol (Int.or x y) n = Int.or (rol x n) (rol y n) :=
+theorem rol_or : ∀ x y n, rol (word.or x y) n = word.or (rol x n) (rol y n) :=
 bitwise_binop_rol bits_or
 
-theorem rol_xor : ∀ x y n, rol (Int.xor x y) n = Int.xor (rol x n) (rol y n) :=
+theorem rol_xor : ∀ x y n, rol (word.xor x y) n = word.xor (rol x n) (rol y n) :=
 bitwise_binop_rol bits_xor
 
 theorem rol_rol (x n m) : wordsize ∣ modulus →
   rol (rol x n) m = rol x (modu (n + m) iwordsize) := sorry
 
-theorem rolm_zero (x m) : rolm x 0 m = Int.and x m := sorry
+theorem rolm_zero (x m) : rolm x 0 m = word.and x m := sorry
 
 theorem rolm_rolm (x n₁ m₁ n₂ m₂) : wordsize ∣ modulus →
   rolm (rolm x n₁ m₁) n₂ m₂ =
-  rolm x (modu (n₁ + n₂) iwordsize) (Int.and (rol m₁ n₂) m₂) := sorry
+  rolm x (modu (n₁ + n₂) iwordsize) (word.and (rol m₁ n₂) m₂) := sorry
 
-theorem or_rolm (x n m₁ m₂) : Int.or (rolm x n m₁) (rolm x n m₂) = rolm x n (Int.or m₁ m₂) := sorry
+theorem or_rolm (x n m₁ m₂) : word.or (rolm x n m₁) (rolm x n m₂) = rolm x n (word.or m₁ m₂) := sorry
 
 theorem ror_rol (x y) : ltu y iwordsize → ror x y = rol x (iwordsize - y) := sorry
 
 theorem ror_rol_neg (x y) : wordsize ∣ modulus → ror x y = rol x (-y) := sorry
 
 theorem or_ror (x y z) : ltu y iwordsize → ltu z iwordsize →
-  y + z = iwordsize → ror x z = Int.or (shl x y) (shru x z) := sorry
+  y + z = iwordsize → ror x z = word.or (shl x y) (shru x z) := sorry
 
 /- ** Properties of [Z_one_bits] and [is_power2]. -/
 
@@ -695,7 +697,7 @@ theorem shl_mul (x y) : shl x y = x * shl 1 y := sorry
 theorem mul_pow2 (x n logn) : is_power2 n = some logn → x * n = shl x logn := sorry
 
 theorem shifted_or_is_add (x y n) : n < wordsize → unsigned y < 2^n →
-  Int.or (shl x (repr n)) y = repr (unsigned x * 2^n + unsigned y) := sorry
+  word.or (shl x (repr n)) y = repr (unsigned x * 2^n + unsigned y) := sorry
 
 /- Unsigned right shifts and unsigned divisions by powers of 2. -/
 
@@ -712,7 +714,7 @@ theorem divs_pow2 (x n logn) : is_power2 n = some logn → x / n = shrx x logn :
 
 /- Unsigned modulus over [2^n] is masking with [2^n-1]. -/
 
-theorem modu_and (x n logn) : is_power2 n = some logn → modu x n = Int.and x (n - 1) := sorry
+theorem modu_and (x n logn) : is_power2 n = some logn → modu x n = word.and x (n - 1) := sorry
 
 /- ** Properties of [shrx] (signed division by a power of 2) -/
 
@@ -735,10 +737,10 @@ theorem shrx_carry (x y) : ltu y (repr (wordsize - 1)) →
 
 lemma shr_shru_positive (x y) : signed x ≥ 0 → shr x y = shru x y := sorry
 
-lemma and_positive (x y) : signed y ≥ 0 → signed (Int.and x y) ≥ 0 := sorry
+lemma and_positive (x y) : signed y ≥ 0 → signed (word.and x y) ≥ 0 := sorry
 
 theorem shr_and_is_shru_and (x y z) : y ≥ 0 →
-  shr (Int.and x y) z = shru (Int.and x y) z := sorry
+  shr (word.and x y) z = shru (word.and x y) z := sorry
 
 @[simp] lemma bits_zero_ext (n x i) :
   test_bit (zero_ext n x) i = to_bool (i < n) && test_bit x i := sorry
@@ -750,7 +752,7 @@ theorem zero_ext_above (n x) : n ≥ wordsize → zero_ext n x = x := sorry
 
 theorem sign_ext_above (n : ℕ+) (x) : n.1 ≥ wordsize → sign_ext n x = x := sorry
 
-theorem zero_ext_and (n x) : zero_ext n x = Int.and x (repr (2^n - 1)) := sorry
+theorem zero_ext_and (n x) : zero_ext n x = word.and x (repr (2^n - 1)) := sorry
 
 theorem zero_ext_mod (n x) : n < wordsize →
   unsigned (zero_ext n x) = unsigned x % 2^n := sorry
@@ -816,7 +818,7 @@ lemma eqmod_sign_ext (x) (n : ℕ+) : n.1 < wordsize →
 
 theorem one_bits_range (x i) : i ∈ one_bits x → ltu i iwordsize := sorry
 
-def int_of_one_bits : list Int → Int
+def int_of_one_bits : list word → word
 | [] := 0
 | (a :: l) := shl 1 a + int_of_one_bits l
 
@@ -860,14 +862,14 @@ theorem ltu_range_test (x y) : ltu x y → unsigned y ≤ max_signed →
   0 ≤ signed x ∧ signed x < unsigned y := sorry
 
 theorem lt_sub_overflow (x y) :
-  Int.xor (sub_overflow x y 0) (negative (x - y)) = to_bool (x < y) := sorry
+  word.xor (sub_overflow x y 0) (negative (x - y)) = to_bool (x < y) := sorry
 
 lemma signed_eq {x y} : x = y ↔ signed x = signed y := sorry
 
-lemma le_iff_lt_or_eq (x y : Int) : x ≤ y ↔ x < y ∨ x = y :=
+lemma le_iff_lt_or_eq (x y : word) : x ≤ y ↔ x < y ∨ x = y :=
 iff.trans (@le_iff_lt_or_eq ℤ _ _ _) (or_congr iff.rfl signed_eq.symm)
 
-instance decidable_linear_order : decidable_linear_order Int :=
+instance decidable_linear_order : decidable_linear_order word :=
 { le              := (≤),
   le_refl         := λx, @le_refl ℤ _ _,
   le_trans        := λx y z, @le_trans ℤ _ _ _ _,
@@ -884,7 +886,7 @@ lemma ltu_not (x y) : ltu y x ↔ ¬ltu x y ∧ x ≠ y := sorry
 
 /- Non-overlapping test -/
 
-def no_overlap (ofs1 : Int) (sz1 : ℕ) (ofs2 : Int) (sz2 : ℕ) : bool :=
+def no_overlap (ofs1 : word) (sz1 : ℕ) (ofs2 : word) (sz2 : ℕ) : bool :=
 let x1 := unsigned ofs1, x2 := unsigned ofs2 in
 x1 + sz1 < modulus ∧ x2 + sz2 < modulus ∧ (x1 + sz1 ≤ x2 ∨ x2 + sz2 ≤ x1)
 
@@ -898,7 +900,7 @@ lemma no_overlap_sound (ofs1 sz1 ofs2 sz2 base) :
 
 /- Size of integers, in bits. -/
 
-def size (x : Int) : ℕ := nat.size (unsigned x)
+def size (x : word) : ℕ := nat.size (unsigned x)
 
 theorem size_zero : size 0 = 0 := congr_arg nat.size unsigned_zero
 
@@ -917,23 +919,54 @@ theorem lt_pow_size (x) : unsigned x < 2^size x := nat.lt_pow_size _
 
 theorem size_le_of_lt_pow (x n) : unsigned x < 2^n → size x ≤ n := nat.size_le_of_lt_pow
 
-theorem size_and (a b) : size (Int.and a b) ≤ min (size a) (size b) := sorry
+theorem size_and (a b) : size (word.and a b) ≤ min (size a) (size b) := sorry
 
-theorem and_interval (a b) : unsigned (Int.and a b) < 2^ min (size a) (size b) := sorry
+theorem and_interval (a b) : unsigned (word.and a b) < 2^ min (size a) (size b) := sorry
 
-theorem size_or (a b) : size (Int.or a b) = max (size a) (size b) := sorry
+theorem size_or (a b) : size (word.or a b) = max (size a) (size b) := sorry
 
-theorem or_interval (a b) : unsigned (Int.or a b) < 2^ max (size a) (size b) := sorry
+theorem or_interval (a b) : unsigned (word.or a b) < 2^ max (size a) (size b) := sorry
 
-theorem size_xor (a b) : size (Int.xor a b) ≤ max (size a) (size b) := sorry
+theorem size_xor (a b) : size (word.xor a b) ≤ max (size a) (size b) := sorry
 
-theorem xor_interval (a b) : unsigned (Int.xor a b) < 2^ max (size a) (size b) := sorry
+theorem xor_interval (a b) : unsigned (word.xor a b) < 2^ max (size a) (size b) := sorry
 
 theorem wordsize_dvd_modulus (n) : wordsize = 2^n → wordsize ∣ modulus := sorry
 
+@[simp] lemma length_words_of_int (n x) : (words_of_int n x).length = n :=
+by revert x; induction n; simph [words_of_int]
+
+@[simp] lemma nat_of_words_of_int (n x) :
+  nat_of_words (words_of_int n x) = x.nat_mod (2^(wordsize * n)) := sorry
+
+lemma words_of_int_mod (n) {x y : ℤ} :
+  x.nat_mod (2^(wordsize * n)) = y.nat_mod (2^(wordsize * n)) →
+  words_of_int n x = words_of_int n y :=
+sorry
+
+lemma nat_of_words_append (l2 l1) :
+  nat_of_words (l1 ++ l2) = nat_of_words l1 + nat_of_words l2 * 2^(wordsize * l1.length) := sorry
+
+lemma nat_of_words_range (l) : nat_of_words l < 2^(wordsize * l.length) := sorry
+
+lemma words_of_int_append {n2 x2 n1 x1} : x1 < 2^(wordsize * n1) →
+  words_of_int (n1 + n2) (x1 + x2 * 2^(wordsize * n1)) =
+  words_of_int n1 x1 ++ words_of_int n2 x2 := sorry
+
+/- Theorems that depend on positive word size -/
+parameter {wordsize_pos : wordsize > 0}
+
+theorem unsigned_one : unsigned 1 = 1 := sorry
+
+theorem one_ne_zero : (1:word) ≠ 0 := sorry
+
+/- ** Properties of [modulus], [max_unsigned], etc. -/
+
+theorem half_modulus_modulus : modulus = 2 * half_modulus := sorry
+
 end
 
-def scoe {w w'} (x : Int w) : Int w' := repr (signed x)
-def ucoe {w w'} (x : Int w) : Int w' := repr (unsigned x)
+def scoe {w w' : ℕ} (x : word w) : word w' := repr (signed x)
+def ucoe {w w' : ℕ} (x : word w) : word w' := repr (unsigned x)
 
-end Int
+end word

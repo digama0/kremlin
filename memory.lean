@@ -714,7 +714,7 @@ Proof.
   destruct (valid_access_dec m Mint8signed b ofs Readable).
   rewrite pred_dec_true; auto. unfold decode_val.
   destruct (proj_bytes cl); auto.
-  simpl. decEq. decEq. rewrite Int.sign_ext_zero_ext. auto. compute; auto.
+  simpl. decEq. decEq. rewrite word.sign_ext_zero_ext. auto. compute; auto.
   rewrite pred_dec_false; auto.
 Qed.
 
@@ -728,7 +728,7 @@ Proof.
   destruct (valid_access_dec m Mint16signed b ofs Readable).
   rewrite pred_dec_true; auto. unfold decode_val.
   destruct (proj_bytes cl); auto.
-  simpl. decEq. decEq. rewrite Int.sign_ext_zero_ext. auto. compute; auto.
+  simpl. decEq. decEq. rewrite word.sign_ext_zero_ext. auto. compute; auto.
   rewrite pred_dec_false; auto.
 Qed.
 
@@ -912,13 +912,13 @@ Lemma addressing_int64_split:
   forall i,
   Archi.ptr64 = false ->
   (8 | Ptrofs.unsigned i) ->
-  Ptrofs.unsigned (Ptrofs.add i (Ptrofs.of_int (Int.repr 4))) = Ptrofs.unsigned i + 4.
+  Ptrofs.unsigned (Ptrofs.add i (Ptrofs.of_int (word.repr 4))) = Ptrofs.unsigned i + 4.
 Proof.
   intros.
   rewrite Ptrofs.add_unsigned.
-  replace (Ptrofs.unsigned (Ptrofs.of_int (Int.repr 4))) with (Int.unsigned (Int.repr 4))
+  replace (Ptrofs.unsigned (Ptrofs.of_int (word.repr 4))) with (word.unsigned (word.repr 4))
     by (symmetry; apply Ptrofs.agree32_of_int; auto).
-  change (Int.unsigned (Int.repr 4)) with 4. 
+  change (word.unsigned (word.repr 4)) with 4. 
   apply Ptrofs.unsigned_repr.
   exploit (Zdivide_interval (Ptrofs.unsigned i) Ptrofs.modulus 8).
   omega. apply Ptrofs.unsigned_range. auto.
@@ -933,13 +933,13 @@ Theorem loadv_int64_split:
   loadv Mint64 m a = Some v -> Archi.ptr64 = false ->
   exists v1 v2,
      loadv Mint32 m a = Some (if Archi.big_endian then v1 else v2)
-  /\ loadv Mint32 m (Val.add a (Vint (Int.repr 4))) = Some (if Archi.big_endian then v2 else v1)
+  /\ loadv Mint32 m (Val.add a (Vint (word.repr 4))) = Some (if Archi.big_endian then v2 else v1)
   /\ Val.lessdef v (Val.longofwords v1 v2).
 Proof.
   intros. destruct a; simpl in H; inv H.
   exploit load_int64_split; eauto. intros (v1 & v2 & L1 & L2 & EQ).
   unfold Val.add; rewrite H0.
-  assert (NV: Ptrofs.unsigned (Ptrofs.add i (Ptrofs.of_int (Int.repr 4))) = Ptrofs.unsigned i + 4).
+  assert (NV: Ptrofs.unsigned (Ptrofs.add i (Ptrofs.of_int (word.repr 4))) = Ptrofs.unsigned i + 4).
   { apply addressing_int64_split; auto. 
     exploit load_valid_access. eexact H2. intros [P Q]. auto. }
   exists v1, v2.
@@ -1351,25 +1351,25 @@ Proof. intros. apply store_similar_chunks. apply encode_val_int16_signed_unsigne
 
 Theorem store_int8_zero_ext:
   forall m b ofs n,
-  store Mint8unsigned m b ofs (Vint (Int.zero_ext 8 n)) =
+  store Mint8unsigned m b ofs (Vint (word.zero_ext 8 n)) =
   store Mint8unsigned m b ofs (Vint n).
 Proof. intros. apply store_similar_chunks. apply encode_val_int8_zero_ext. auto. Qed.
 
 Theorem store_int8_sign_ext:
   forall m b ofs n,
-  store Mint8signed m b ofs (Vint (Int.sign_ext 8 n)) =
+  store Mint8signed m b ofs (Vint (word.sign_ext 8 n)) =
   store Mint8signed m b ofs (Vint n).
 Proof. intros. apply store_similar_chunks. apply encode_val_int8_sign_ext. auto. Qed.
 
 Theorem store_int16_zero_ext:
   forall m b ofs n,
-  store Mint16unsigned m b ofs (Vint (Int.zero_ext 16 n)) =
+  store Mint16unsigned m b ofs (Vint (word.zero_ext 16 n)) =
   store Mint16unsigned m b ofs (Vint n).
 Proof. intros. apply store_similar_chunks. apply encode_val_int16_zero_ext. auto. Qed.
 
 Theorem store_int16_sign_ext:
   forall m b ofs n,
-  store Mint16signed m b ofs (Vint (Int.sign_ext 16 n)) =
+  store Mint16signed m b ofs (Vint (word.sign_ext 16 n)) =
   store Mint16signed m b ofs (Vint n).
 Proof. intros. apply store_similar_chunks. apply encode_val_int16_sign_ext. auto. Qed.
 
@@ -1660,7 +1660,7 @@ Theorem storev_int64_split:
   storev Mint64 m a v = Some m' -> Archi.ptr64 = false ->
   exists m1,
      storev Mint32 m a (if Archi.big_endian then Val.hiword v else Val.loword v) = Some m1
-  /\ storev Mint32 m1 (Val.add a (Vint (Int.repr 4))) (if Archi.big_endian then Val.loword v else Val.hiword v) = Some m'.
+  /\ storev Mint32 m1 (Val.add a (Vint (word.repr 4))) (if Archi.big_endian then Val.loword v else Val.hiword v) = Some m'.
 Proof.
   intros. destruct a; simpl in H; inv H. rewrite H2.
   exploit store_int64_split; eauto. intros [m1 [A B]].

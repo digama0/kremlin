@@ -7,7 +7,7 @@ open flocq
 
 def ptr64 : bool := ff
 
-constant big_endian : bool
+def big_endian : bool := sorry
 
 def align_int64 := 8
 def align_float64 := 8
@@ -17,7 +17,7 @@ def splitlong := tt
 lemma splitlong_ptr32 : splitlong = tt → ptr64 = ff := λ_, rfl
 
 def default_pl_64 : bool × nan_pl 53 :=
-(ff, Int.repr (2^51))
+(ff, word.repr (2^51))
   
 def choose_binop_pl_64 (s1 : bool) (pl1 : nan_pl 53) (s2 : bool) (pl2 : nan_pl 53) : bool :=
 /- Choose second NaN if pl2 is sNaN but pl1 is qNan.
@@ -25,7 +25,7 @@ def choose_binop_pl_64 (s1 : bool) (pl1 : nan_pl 53) (s2 : bool) (pl2 : nan_pl 5
 pl1.unsigned.test_bit 51 && bnot (pl2.unsigned.test_bit 51)
 
 def default_pl_32 : bool × nan_pl 24 :=
-(ff,  Int.repr (2^22))
+(ff,  word.repr (2^22))
   
 def choose_binop_pl_32 (s1 : bool) (pl1 : nan_pl 24) (s2 : bool) (pl2 : nan_pl 24) : bool :=
 /- Choose second NaN if pl2 is sNaN but pl1 is qNan.

@@ -40,7 +40,7 @@ lemma typesize_pos (ty) : typesize ty > 0 :=
 by cases ty; exact dec_trivial
 
 lemma typesize_Tptr : typesize Tptr = if archi.ptr64 then 8 else 4 :=
-rfl
+by delta Tptr; cases archi.ptr64; refl
 
 /- All values of size 32 bits are also of type [Tany32].  All values
   are of type [Tany64].  This corresponds to the following subtyping
@@ -117,7 +117,7 @@ def Mptr : memory_chunk := if archi.ptr64 then Mint64 else Mint32.
 
 /- The type (integer/pointer or float) of a chunk. -/
 
-def type_of_chunk : memory_chunk → typ
+def memory_chunk.type : memory_chunk → typ
 | Mint8signed    := Tint
 | Mint8unsigned  := Tint
 | Mint16signed   := Tint
@@ -129,7 +129,8 @@ def type_of_chunk : memory_chunk → typ
 | Many32         := Tany32
 | Many64         := Tany64
 
-lemma type_of_Mptr : type_of_chunk Mptr = Tptr := rfl
+lemma memory_chunk.Mptr.type : Mptr.type = Tptr :=
+by delta Mptr Tptr; cases archi.ptr64; refl
 
 def chunk_of_type : typ → memory_chunk
 | Tint    := Mint32
@@ -139,7 +140,65 @@ def chunk_of_type : typ → memory_chunk
 | Tany32  := Many32
 | Tany64  := Many64
 
-lemma chunk_of_Tptr : chunk_of_type Tptr = Mptr := rfl
+lemma chunk_of_Tptr : chunk_of_type Tptr = Mptr :=
+by delta Mptr Tptr; cases archi.ptr64; refl
+
+/- * Properties of memory chunks -/
+
+/- Memory reads and writes are performed by quantities called memory chunks,
+  encoding the type, size and signedness of the chunk being addressed.
+  The following functions extract the size information from a chunk. -/
+
+def memory_chunk.size : memory_chunk → ℕ
+| Mint8signed    := 1
+| Mint8unsigned  := 1
+| Mint16signed   := 2
+| Mint16unsigned := 2
+| Mint32         := 4
+| Mint64         := 8
+| Mfloat32       := 4
+| Mfloat64       := 8
+| Many32         := 4
+| Many64         := 8
+
+lemma memory_chunk.size_pos (chunk) : memory_chunk.size chunk > 0 :=
+by cases chunk; exact dec_trivial
+
+lemma memory_chunk.Mptr.size : Mptr.size = if archi.ptr64 then 8 else 4 :=
+by delta Mptr; cases archi.ptr64; refl
+
+/- Memory reads and writes must respect alignment constraints:
+  the byte offset of the location being addressed should be an exact
+  multiple of the natural alignment for the chunk being addressed.
+  This natural alignment is defined by the following
+  [align_chunk] function.  Some target architectures
+  (e.g. PowerPC and x86) have no alignment constraints, which we could
+  reflect by taking [align_chunk chunk = 1].  However, other architectures
+  have stronger alignment requirements.  The following definition is
+  appropriate for PowerPC, ARM and x86. -/
+
+def memory_chunk.align : memory_chunk → ℤ
+| Mint8signed    := 1
+| Mint8unsigned  := 1
+| Mint16signed   := 2
+| Mint16unsigned := 2
+| Mint32         := 4
+| Mint64         := 8
+| Mfloat32       := 4
+| Mfloat64       := 4
+| Many32         := 4
+| Many64         := 4
+
+lemma memory_chunk.align_pos (chunk) : memory_chunk.align chunk > 0 :=
+by cases chunk; exact dec_trivial
+
+lemma memory_chunk.Mptr.align : Mptr.align = if archi.ptr64 then 8 else 4 :=
+by delta Mptr; cases archi.ptr64; refl
+
+lemma align_size_chunk_dvd (chunk : memory_chunk) : chunk.align ∣ chunk.size := sorry
+
+lemma align_le_dvd (chunk1 chunk2 : memory_chunk) (h : chunk1.align ≤ chunk2.align) :
+  chunk1.align ∣ chunk2.align := sorry
 
 /- Initialization data for global variables. -/
 
@@ -364,8 +423,8 @@ def ef_sig : external_function → signature
 | (EF_external name sg)        := sg
 | (EF_builtin name sg)         := sg
 | (EF_runtime name sg)         := sg
-| (EF_vload chunk)             := ⟨[Tptr], some (type_of_chunk chunk), cc_default⟩
-| (EF_vstore chunk)            := ⟨[Tptr, type_of_chunk chunk], none, cc_default⟩
+| (EF_vload chunk)             := ⟨[Tptr], some chunk.type, cc_default⟩
+| (EF_vstore chunk)            := ⟨[Tptr, chunk.type], none, cc_default⟩
 | (EF_malloc)                  := ⟨[Tptr], some Tptr, cc_default⟩
 | (EF_free)                    := ⟨[Tptr], none, cc_default⟩
 | (EF_memcpy sz al)            := ⟨[Tptr, Tptr], none, cc_default⟩

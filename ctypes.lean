@@ -197,9 +197,7 @@ end
 
 #check λ env : composite_env, λ id, env ^! id 
 
--- TODO(Mario): Support for WF recursion not yet supported
-def complete_type (env : composite_env) : type → bool := sorry
-/-
+def complete_type (env : composite_env) : type → bool
 | Tvoid             := ff
 | (Tint _ _ _)      := tt
 | (Tlong _ _)       := tt
@@ -209,7 +207,6 @@ def complete_type (env : composite_env) : type → bool := sorry
 | (Tfunction _ _ _) := ff
 | (Tstruct id _)    := (env^!id).is_some
 | (Tunion id _)     := (env^!id).is_some
--/
 
 def complete_or_function_type (env : composite_env) : type → bool
 | (Tfunction _ _ _) := true
@@ -231,13 +228,7 @@ end
   types.  However, it is convenient that [alignof] is a total
   function.  For incomplete types, it returns 1. -/
 
--- TODO(Mario): mutual defs not yet supported
-def alignof (env : composite_env) : type → ℤ := sorry
-/-
-mutual def alignof, alignof_inner (env : composite_env)
-with alignof : type → ℤ
-| t := align_attr (attr_of_type t) (alignof_inner t)
-with alignof_inner : type → ℤ
+def alignof_inner (env : composite_env) : type → ℤ
 | Tvoid             := 1
 | (Tint I8 _ _)     := 1
 | (Tint I16 _ _)    := 2
@@ -247,11 +238,13 @@ with alignof_inner : type → ℤ
 | (Tfloat F32 _)    := 4
 | (Tfloat F64 _)    := archi.align_float64
 | (Tpointer _ _)    := if archi.ptr64 then 8 else 4
-| (Tarray t' _ _)   := alignof env t'
+| (Tarray t' _ _)   := align_attr (attr_of_type t') (alignof_inner t')
 | (Tfunction _ _ _) := 1
 | (Tstruct id _)    := match env^!id with some co := co_alignof co | none := 1 end
 | (Tunion id _)     := match env^!id with some co := co_alignof co | none := 1 end
--/
+
+def alignof (env : composite_env) (t : type) : ℤ :=
+align_attr (attr_of_type t) (alignof_inner env t)
 
 theorem align_attr_two_p (al a) :
   (∃ n, al = 2^n) →
@@ -270,9 +263,7 @@ theorem alignof_pos (env t) : alignof env t > 0 := sorry
   arbitrarily taken to be 0.
 -/
 
--- TODO(Mario): Support for WF recursion not yet supported
-def sizeof (env: composite_env) : type → ℤ := sorry
-/-def sizeof (env: composite_env) : type → ℤ
+def sizeof (env: composite_env) : type → ℤ
 | Tvoid             := 1
 | (Tint I8 _ _)     := 1
 | (Tint I16 _ _)    := 2
@@ -285,7 +276,7 @@ def sizeof (env: composite_env) : type → ℤ := sorry
 | (Tarray t' n _)   := sizeof t' * max 0 n
 | (Tfunction _ _ _) := 1
 | (Tstruct id _)    := match env^!id with some co := co_sizeof co | none := 0 end
-| (Tunion id _)     := match env^!id with some co := co_sizeof co | none := 0 end-/
+| (Tunion id _)     := match env^!id with some co := co_sizeof co | none := 0 end
 
 
 lemma sizeof_pos (env t) : sizeof env t >= 0 := sorry
@@ -294,12 +285,9 @@ lemma sizeof_pos (env t) : sizeof env t >= 0 := sorry
   unless the alignment was artificially increased with the [__Alignas]
   attribute. -/
 
--- TODO(Mario): nested inductive defs not yet supported
-def naturally_aligned : type → Prop := sorry
-/-
+def naturally_aligned : type → Prop
 | (Tarray t' _ a) := attr.attr_alignas a = none ∧ naturally_aligned t'
 | t := attr.attr_alignas (attr_of_type t) = none
--/
 
 lemma sizeof_alignof_compat (env t) (h : naturally_aligned t) :
   alignof env t ∣ sizeof env t := sorry
@@ -441,9 +429,7 @@ def type_is_volatile (ty: type) : bool :=
   Block copy operations do not support alignments greater than 8,
   and require the size to be an integral multiple of the alignment. -/
 
--- TODO(Mario): nested inductive defs not yet supported
-def alignof_blockcopy (env : composite_env) : type → ℤ := sorry
-/-
+def alignof_blockcopy (env : composite_env) : type → ℤ
 | Tvoid             := 1
 | (Tint I8 _ _)     := 1
 | (Tint I16 _ _)    := 2
@@ -457,7 +443,6 @@ def alignof_blockcopy (env : composite_env) : type → ℤ := sorry
 | (Tfunction _ _ _) := 1
 | (Tstruct id _ )   := match env^!id with some co := min 8 (co_alignof co) | none := 1 end
 | (Tunion id _)     := match env^!id with some co := min 8 (co_alignof co) | none := 1 end
--/
 
 lemma alignof_blockcopy_1248 (env ty) :
   let a := alignof_blockcopy env ty in
@@ -476,9 +461,7 @@ lemma sizeof_alignof_blockcopy_compat (env ty) :
   Type ranks ensure that type expressions (ignoring pointer and function types)
   have an inductive structure. -/
 
--- TODO(Mario): nested inductive defs not yet supported
-def rank_type (ce : composite_env) : type → nat := sorry
-/-
+def rank_type (ce : composite_env) : type → nat
 | (Tarray t' _ _) := rank_type t' + 1
 | (Tstruct id _) :=
   match ce^!id with
@@ -491,7 +474,6 @@ def rank_type (ce : composite_env) : type → nat := sorry
   | some co := co_rank co + 1
   end
 | _ := 0
--/
 
 def rank_members (ce : composite_env) : members → nat
 | [] := 0
