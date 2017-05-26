@@ -47,8 +47,8 @@ if archi.big_endian then l.reverse else l
 def encode_int (sz : ℕ) (x : ℤ) : list byte :=
 rev_if_be (words_of_int sz x)
 
-def decode_int (b : list byte) : ℤ :=
-int_of_words (rev_if_be b)
+def decode_int (b : list byte) : ℕ :=
+nat_of_words (rev_if_be b)
 
 /- Length properties -/
 
@@ -63,7 +63,7 @@ by simp [encode_int]
 lemma rev_if_be_involutive (l) : rev_if_be (rev_if_be l) = l :=
 by delta rev_if_be; by_cases (archi.big_endian : Prop); simp [h]
 
-lemma decode_encode_int (n x) : decode_int (encode_int n x) = x % 2^(n * 8) :=
+lemma decode_encode_int (n x) : decode_int (encode_int n x) = x.nat_mod (2^(n * 8)) :=
 by simp [decode_int, encode_int, rev_if_be_involutive]; refl
 
 lemma decode_encode_int_1 (x : int32) :
@@ -151,9 +151,9 @@ def encode_val : memory_chunk → val → list memval
 
 def decode_val (chunk : memory_chunk) (vl : list memval) : val :=
 match proj_bytes vl, chunk with
-| some bl, Mint8signed    := Vint (sign_ext ⟨8, dec_trivial⟩ (repr (decode_int bl)))
+| some bl, Mint8signed    := Vint (sign_ext W8 (repr (decode_int bl)))
 | some bl, Mint8unsigned  := Vint (zero_ext 8 (repr (decode_int bl)))
-| some bl, Mint16signed   := Vint (sign_ext ⟨16, dec_trivial⟩ (repr (decode_int bl)))
+| some bl, Mint16signed   := Vint (sign_ext W16 (repr (decode_int bl)))
 | some bl, Mint16unsigned := Vint (zero_ext 16 (repr (decode_int bl)))
 | some bl, Mint32         := Vint (repr (decode_int bl))
 | some bl, Mint64         := Vlong (repr (decode_int bl))
@@ -180,12 +180,12 @@ lemma proj_inj_value_mismatch (q1 q2 v) : q1 ≠ q2 → proj_value q1 (inj_value
 
 def decode_encode_val : val → memory_chunk → memory_chunk → val → Prop
 | (Vundef)      _               _               v2 := v2 = Vundef
-| (Vint n)      Mint8signed     Mint8signed     v2 := v2 = Vint (sign_ext ⟨8, dec_trivial⟩ n)
-| (Vint n)      Mint8unsigned   Mint8signed     v2 := v2 = Vint (sign_ext ⟨8, dec_trivial⟩ n)
+| (Vint n)      Mint8signed     Mint8signed     v2 := v2 = Vint (sign_ext W8 n)
+| (Vint n)      Mint8unsigned   Mint8signed     v2 := v2 = Vint (sign_ext W8 n)
 | (Vint n)      Mint8signed     Mint8unsigned   v2 := v2 = Vint (zero_ext 8 n)
 | (Vint n)      Mint8unsigned   Mint8unsigned   v2 := v2 = Vint (zero_ext 8 n)
-| (Vint n)      Mint16signed    Mint16signed    v2 := v2 = Vint (sign_ext ⟨16, dec_trivial⟩ n)
-| (Vint n)      Mint16unsigned  Mint16signed    v2 := v2 = Vint (sign_ext ⟨16, dec_trivial⟩ n)
+| (Vint n)      Mint16signed    Mint16signed    v2 := v2 = Vint (sign_ext W16 n)
+| (Vint n)      Mint16unsigned  Mint16signed    v2 := v2 = Vint (sign_ext W16 n)
 | (Vint n)      Mint16signed    Mint16unsigned  v2 := v2 = Vint (zero_ext 16 n)
 | (Vint n)      Mint16unsigned  Mint16unsigned  v2 := v2 = Vint (zero_ext 16 n)
 | (Vint n)      Mint32          Mint32          v2 := v2 = Vint n
@@ -268,20 +268,20 @@ lemma encode_val_int8_zero_ext (n : int32) :
   encode_val Mint8unsigned (Vint (zero_ext 8 n)) = encode_val Mint8unsigned (Vint n) := sorry
 
 lemma encode_val_int8_sign_ext (n) :
-  encode_val Mint8signed (Vint (sign_ext ⟨8, dec_trivial⟩ n)) = encode_val Mint8signed (Vint n) := sorry
+  encode_val Mint8signed (Vint (sign_ext W8 n)) = encode_val Mint8signed (Vint n) := sorry
 
 lemma encode_val_int16_zero_ext (n) :
   encode_val Mint16unsigned (Vint (zero_ext 16 n)) = encode_val Mint16unsigned (Vint n) := sorry
 
 lemma encode_val_int16_sign_ext (n) :
-  encode_val Mint16signed (Vint (sign_ext ⟨16, dec_trivial⟩ n)) = encode_val Mint16signed (Vint n) := sorry
+  encode_val Mint16signed (Vint (sign_ext W16 n)) = encode_val Mint16signed (Vint n) := sorry
 
 lemma decode_val_cast_type (v : val) : memory_chunk → Prop
-| Mint8signed := v = val.sign_ext ⟨8, dec_trivial⟩ v
-| Mint8unsigned := v = val.zero_ext 8 v
-| Mint16signed := v = val.sign_ext ⟨16, dec_trivial⟩ v
+| Mint8signed    := v = val.sign_ext W8 v
+| Mint8unsigned  := v = val.zero_ext 8 v
+| Mint16signed   := v = val.sign_ext W16 v
 | Mint16unsigned := v = val.zero_ext 16 v
-| _ := true
+| _              := true
 
 lemma decode_val_cast (chunk l) : decode_val_cast_type (decode_val chunk l) chunk := sorry
 
@@ -413,9 +413,9 @@ lemma proj_bytes_append (l2 l1) : proj_bytes (l1 ++ l2) =
   do b1 ← proj_bytes l1, b2 ← proj_bytes l2, some (b1 ++ b2) := sorry
 
 lemma decode_val_int64 {l1 l2 : list memval} : l1.length = 4 → l2.length = 4 → ¬ archi.ptr64 →
-  lessdef (decode_val Mint64 (l1 ++ l2)) $ long_of_words
+  lessdef (decode_val Mint64 (l1 ++ l2)) (long_of_words
     (decode_val Mint32 (if archi.big_endian then l1 else l2))
-    (decode_val Mint32 (if archi.big_endian then l2 else l1)) := sorry
+    (decode_val Mint32 (if archi.big_endian then l2 else l1))) := sorry
 
 lemma encode_val_int64 (v) : ¬ archi.ptr64 → encode_val Mint64 v =
      encode_val Mint32 (if archi.big_endian then hiword v else loword v)

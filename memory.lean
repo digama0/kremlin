@@ -27,7 +27,7 @@ Being empty is represented by the absence of any permission.
 import .memdata data.nat.bquant data.nat.dvd
 
 namespace memory
-open maps memdata values ast
+open maps memdata values ast memdata.memval word integers
 
 inductive permission : Type
 | Freeable : permission
@@ -81,6 +81,9 @@ def perm_order'' : option permission → option permission → Prop
 | _  none      := true
 | p1 (some p2) := perm_order' p1 p2
 
+theorem perm_order''.refl (op) : perm_order'' op op :=
+by { cases op, trivial, apply perm_refl }
+
 structure mem : Type :=
 (mem_contents : PTree.t (PTree.t memval))  /- [block → offset → memval] -/
 (mem_access : PTree.t (ℕ → perm_kind → option permission))
@@ -88,7 +91,7 @@ structure mem : Type :=
 (nextblock : block)
 (access_max : ∀ (b : block) (ofs : ℕ), let m := (mem_access#b).get_or_else (λ_ _, none) in
   perm_order'' (m ofs Max) (m ofs Cur))
-(nextblock_noaccess : ∀ {b : block} (ofs : ℕ) (k : perm_kind), ¬ (b < nextblock) →
+(nextblock_noaccess : ∀ {b : block} (ofs : ℕ) (k : perm_kind), nextblock ≤ b →
   (mem_access#b).get_or_else (λ_ _, none) ofs k = none)
 
 /- * Validity of blocks and accesses -/
@@ -104,6 +107,12 @@ mt $ λ bb, by rw bb at h1; assumption
 
 def mem.access (m : mem) (b : block) : ℕ → perm_kind → option permission :=
 (m.mem_access#b).get_or_else (λ_ _, none)
+
+def mem.get_block (m : mem) (b : block) : PTree.t memval :=
+(m.mem_contents#b).get_or_else (PTree.empty _)
+
+def mem.contents (m : mem) (b : block) (ofs : ℕ) : memval :=
+(m.get_block b # num.succ' ofs).get_or_else Undef
 
 /- Permissions -/
 
@@ -151,7 +160,7 @@ decidable_lo_hi _ _ _
 -/
 
 def valid_access (m) (chunk b ofs p) : Prop :=
-range_perm m b ofs (ofs + (chunk : memory_chunk).size) Cur p ∧ chunk.align ∣ ofs
+range_perm m b ofs (ofs + memory_chunk.size chunk) Cur p ∧ chunk.align ∣ ofs
 
 theorem valid_access_implies {m chunk b ofs p1 p2} :
   perm_order p1 p2 → valid_access m chunk b ofs p1 → valid_access m chunk b ofs p2 :=
@@ -167,8 +176,8 @@ lemma valid_access_perm {m chunk b ofs p} (k) :
 
 theorem valid_access_valid_block {m chunk b ofs} :
   valid_access m chunk b ofs Nonempty → valid_block m b :=
-λ h, decidable.by_contradiction $ λhn,
-have t : mem.access m b ofs Cur = none, from m.nextblock_noaccess ofs Cur hn,
+λ h, decidable.by_contradiction $ λ hn,
+have t : mem.access m b ofs Cur = none, from m.nextblock_noaccess ofs Cur (le_of_not_gt hn),
 have p : _, from valid_access_perm Cur h,
 by delta perm at p; rw t at p; exact p
 
@@ -176,7 +185,7 @@ lemma valid_access_compat {m} {chunk1 chunk2 : memory_chunk} {b ofs p} :
   chunk1.size = chunk2.size → chunk2.align ≤ chunk1.align →
   valid_access m chunk1 b ofs p → valid_access m chunk2 b ofs p := sorry
 
-lemma valid_access_dec (m chunk b ofs p) : decidable (valid_access m chunk b ofs p) :=
+instance valid_access_dec (m chunk b ofs p) : decidable (valid_access m chunk b ofs p) :=
 by delta valid_access; apply_instance
 
 /- [valid_pointer m b ofs] returns [tt] if the address [b, ofs]
@@ -218,1177 +227,587 @@ weak_valid_pointer_spec.2 $ or.inl v
 /- The initial store -/
 
 protected def empty : mem :=
-{ mem_contents := PTree.empty _,
-  mem_access := PTree.empty _,
-  nextblock := (1 : pos_num),
-  access_max := λ b ofs, show perm_order'' _ _, by rw PTree.gempty; trivial,
+{ mem_contents       := PTree.empty _,
+  mem_access         := PTree.empty _,
+  nextblock          := 1,
+  access_max         := λ b ofs, by rw PTree.gempty; trivial,
   nextblock_noaccess := λ b ofs k h, by rw PTree.gempty; trivial }
+instance : has_emptyc mem := ⟨memory.empty⟩
 
 /- Allocation of a fresh block with the given bounds.  Return an updated
   memory state and the address of the fresh block, which initially contains
   undefined cells.  Note that allocation never fails: we model an
   infinite memory. -/
 
-def alloc (m : mem) (lo hi : ℤ) :=
-  (mkmem (PTree.set m.(nextblock)
-                   (ZMap.init Undef)
-                   m.(mem_contents))
-         (PTree.set m.(nextblock)
-                   (λ ofs k := if zle lo ofs && zlt ofs hi then some Freeable else none)
-                   m.(mem_access))
-         (Psucc m.(nextblock))
-         _ _ _,
-   m.(nextblock))
-Next Obligation
-  repeat rewrite PTree.gsspec. destruct (peq b (nextblock m))
-  subst b. destruct (zle lo ofs && zlt ofs hi); red; auto with mem
-  apply access_max
-Qed
-Next Obligation
-  rewrite PTree.gsspec. destruct (peq b (nextblock m))
-  subst b. elim H. apply Plt_succ
-  apply nextblock_noaccess. red; intros; elim H
-  apply Plt_trans_succ; auto
-Qed
-Next Obligation
-  rewrite PTree.gsspec. destruct (peq b (nextblock m)). auto. apply contents_default
-Qed
+def mem.alloc (m : mem) (lo hi : ℕ) : mem :=
+{ mem_contents := PTree.set m.nextblock (PTree.empty _) m.mem_contents,
+  mem_access := PTree.set m.nextblock
+    (λ ofs k, if lo ≤ ofs ∧ ofs < hi then some Freeable else none) m.mem_access,
+  nextblock := m.nextblock.succ,
+  access_max := λ b ofs, by {
+    rw PTree.gsspec,
+    by_cases (b = m.nextblock); simp [h],
+    simp [option.get_or_else, perm_order''.refl],
+    apply m.access_max },
+  nextblock_noaccess := λ b ofs k h, by {
+    rw PTree.gsspec,
+    note := nat.of_pos_num_le.1 h,
+    rw nat.of_pos_num_succ_coe at this,
+    by_cases (b = m.nextblock) with h'; simp [h'],
+    { note := @not_le_of_gt nat _ _ _ this,
+      rw h' at this, exact absurd (le_refl _) this },
+    { apply m.nextblock_noaccess,
+      exact le_of_lt (nat.of_pos_num_lt.2 this) } } }
 
 /- Freeing a block between the given bounds.
   Return the updated memory state where the given range of the given block
   has been invalidated: future reads and writes to this
   range will fail.  Requires freeable permission on the given range. -/
 
-Program def unchecked_free (m : mem) (b : block) (lo hi : ℤ) : mem :=
-  mkmem m.(mem_contents)
-        (PTree.set b
-                (λ ofs k := if zle lo ofs && zlt ofs hi then none else m.(mem_access)#b ofs k)
-                m.(mem_access))
-        m.(nextblock) _ _ _
-Next Obligation
-  repeat rewrite PTree.gsspec. destruct (peq b0 b)
-  destruct (zle lo ofs && zlt ofs hi). red; auto. apply access_max
-  apply access_max
-Qed
-Next Obligation
-  repeat rewrite PTree.gsspec. destruct (peq b0 b). subst
-  destruct (zle lo ofs && zlt ofs hi). auto. apply nextblock_noaccess; auto
-  apply nextblock_noaccess; auto
-Qed
-Next Obligation
-  apply contents_default
-Qed
+def unchecked_free (m : mem) (b : block) (lo hi : ℕ) : mem :=
+{ mem_contents       := m.mem_contents,
+  mem_access         := option.cases_on (m.mem_access#b) m.mem_access $
+    λ old, PTree.set b (λ ofs k, if lo ≤ ofs ∧ ofs < hi then none else old ofs k) m.mem_access,
+  nextblock          := m.nextblock,
+  access_max         := λ b' ofs, by {
+    ginduction m.mem_access#b with h f; dsimp,
+    { exact m.access_max b' ofs },
+    { rw PTree.gsspec,
+      note := m.access_max b' ofs,
+      by_cases (b' = b) with bb; simp [bb, option.get_or_else]; simp [bb] at this,
+      by_cases (lo ≤ ofs ∧ ofs < hi) with lh; simp [lh]; simp [h, option.get_or_else] at this,
+      all_goals {exact this} } },
+  nextblock_noaccess := λ b' ofs k hl, by {
+    ginduction m.mem_access#b with h f; dsimp,
+    { apply m.nextblock_noaccess ofs k hl },
+    { rw PTree.gsspec,
+      note := m.nextblock_noaccess ofs k hl,
+      by_cases (b' = b) with bb; simp [bb, option.get_or_else],
+      { simp [bb, h, option.get_or_else] at this,
+        by_cases (lo ≤ ofs ∧ ofs < hi) with lh; simp [lh, this] },
+      { exact this } } } }
 
-def free (m : mem) (b : block) (lo hi : ℤ) : option mem :=
-  if range_perm_dec m b lo hi Cur Freeable
-  then some(unchecked_free m b lo hi)
-  else none
+def free (m : mem) (b : block) (lo hi : ℕ) : option mem :=
+if range_perm m b lo hi Cur Freeable then some (unchecked_free m b lo hi) else none
 
-def free_list (m : mem) (l : list (block * ℤ * ℤ)) {struct l} : option mem :=
-  match l with
-| nil := some m
-| (b, lo, hi) :: l' :=
-      match free m b lo hi with
-      | none := none
-      | some m' := free_list m' l'
-      end
-  end
+def free_list : mem → list (block × ℕ × ℕ) → option mem
+| m []                  := some m
+| m ((b, lo, hi) :: l') := do m' ← free m b lo hi, free_list m' l'
 
 /- Memory reads. -/
 
 /- Reading N adjacent bytes in a block content. -/
 
-def getN (n : ℕ) (p : ℤ) (c : ZMap.t memval) {struct n} : list memval :=
-  match n with
-| O := nil
-| S n' := ZMap.get p c :: getN n' (p + 1) c
-  end
+def getN' (c : PTree.t memval) : ℕ → pos_num → list memval
+| 0        p := []
+| (n' + 1) p := (c#p).get_or_else Undef :: getN' n' p.succ
+
+def getN (n p : ℕ) (c : PTree.t memval) : list memval :=
+getN' c n (num.succ' p)
+
+def get1 (p : ℕ) (c : PTree.t memval) : memval :=
+(PTree.get (num.succ' p) c).get_or_else Undef
 
 /- [load chunk m b ofs] perform a read in memory state [m], at address
   [b] and offset [ofs].  It returns the value of the memory chunk
   at that address.  [None] is returned if the accessed bytes
   are not readable. -/
 
-def load (chunk : memory_chunk) (m : mem) (b : block) (ofs : ℤ) : option val :=
-  if valid_access_dec m chunk b ofs Readable
-  then some(decode_val chunk (getN (size_chunk_nat chunk) ofs (m.(mem_contents)#b)))
-  else none
+def load (chunk : memory_chunk) (m : mem) (b : block) (ofs : ℕ) : option val :=
+if valid_access m chunk b ofs Readable
+then decode_val chunk $ getN chunk.size ofs (m.get_block b) else none
 
 /- [loadv chunk m addr] is similar, but the address and offset are given
   as a single value [addr], which must be a pointer value. -/
 
-def loadv (chunk : memory_chunk) (m : mem) (addr : val) : option val :=
-  match addr with
-| Vptr b ofs := load chunk m b (Ptrofs.unsigned ofs)
+def loadv (chunk : memory_chunk) (m : mem) : val → option val
+| (Vptr b ofs) := load chunk m b (unsigned ofs)
 | _ := none
-  end
 
-/- [loadbytes m b ofs n] reads [n] consecutive bytes starting at
+/- [load_bytes m b ofs n] reads [n] consecutive bytes starting at
   location [(b, ofs)].  Returns [None] if the accessed locations are
   not readable. -/
 
-def loadbytes (m : mem) (b : block) (ofs n : ℤ) : option (list memval) :=
-  if range_perm_dec m b ofs (ofs + n) Cur Readable
-  then some (getN (nat_of_Z n) ofs (m.(mem_contents)#b))
-  else none
+def load_bytes (m : mem) (b : block) (ofs n : ℕ) : option (list memval) :=
+if range_perm m b ofs (ofs + n) Cur Readable then getN n ofs (m.get_block b) else none
 
 /- Memory stores. -/
 
 /- Writing N adjacent bytes in a block content. -/
 
-def setN (vl : list memval) (p : ℤ) (c : ZMap.t memval) {struct vl} : ZMap.t memval :=
-  match vl with
-| nil := c
-| v :: vl' := setN vl' (p + 1) (ZMap.set p v c)
-  end
+def setN' : list memval → pos_num → PTree.t memval → PTree.t memval
+| []         p c := c
+| (v :: vl') p c := setN' vl' p.succ (PTree.set p v c)
 
-theorem setN_other :
-  ∀ vl c p q,
-  (∀ r, p <= r < p + Z_of_nat (length vl) → r ≠ q) →
-  ZMap.get q (setN vl p c) = ZMap.get q c
-Proof
-  induction vl; intros; simpl
-  auto
-  simpl length in H. rewrite inj_S in H
-  transitivity (ZMap.get q (ZMap.set p a c))
-  apply IHvl. intros. apply H. omega
-  apply ZMap.gso. apply not_eq_sym. apply H. omega
-Qed
+def setN (vl : list memval) (ofs : ℕ) : PTree.t memval → PTree.t memval :=
+setN' vl (num.succ' ofs)
 
-theorem setN_outside :
-  ∀ vl c p q,
-  q < p ∨ q >= p + Z_of_nat (length vl) →
-  ZMap.get q (setN vl p c) = ZMap.get q c
-Proof
-  intros. apply setN_other
-  intros. omega
-Qed
+theorem setN_other {vl c p q} : (∀ r, p ≤ r → r < p + list.length vl → r ≠ q) →
+  get1 q (setN vl p c) = get1 q c := sorry
 
-theorem getN_setN_same :
-  ∀ vl p c,
-  getN (length vl) p (setN vl p c) = vl
-Proof
-  induction vl; intros; simpl
-  auto
-  decEq
-  rewrite setN_outside. apply ZMap.gss. omega
-  apply IHvl
-Qed
+theorem setN_outside {vl c p q} : q < p ∨ q ≥ p + list.length vl →
+  get1 q (setN vl p c) = get1 q c :=
+by { intro h,
+     apply setN_other,
+     intros r h1 h2 hn,
+     rw hn at h1 h2,
+     cases h,
+     { exact not_le_of_gt a h1 },
+     { exact not_le_of_gt h2 a } }
 
-theorem getN_exten :
-  ∀ c1 c2 n p,
-  (∀ i, p <= i < p + Z_of_nat n → ZMap.get i c1 = ZMap.get i c2) →
-  getN n p c1 = getN n p c2
-Proof
-  induction n; intros. auto. rewrite inj_S in H. simpl. decEq
-  apply H. omega. apply IHn. intros. apply H. omega
-Qed
+theorem getN_setN_same {vl p c} : getN (list.length vl) p (setN vl p c) = vl := sorry
 
-theorem getN_setN_disjoint :
-  ∀ vl q c n p,
-  Intv.disjoint (p, p + Z_of_nat n) (q, q + Z_of_nat (length vl)) →
-  getN n p (setN vl q c) = getN n p c
-Proof
-  intros. apply getN_exten. intros. apply setN_other
-  intros; red; intros; subst r. eelim H; eauto
-Qed
+theorem getN.ext {c1 c2 n p} :
+  (∀ i, p ≤ i → i < p + n → get1 i c1 = get1 i c2) →
+  getN n p c1 = getN n p c2 := sorry
 
-theorem getN_setN_outside :
-  ∀ vl q c n p,
-  p + Z_of_nat n <= q ∨ q + Z_of_nat (length vl) <= p →
-  getN n p (setN vl q c) = getN n p c
-Proof
-  intros. apply getN_setN_disjoint. apply Intv.disjoint_range. auto
-Qed
+def interval_disjoint (x dx y dy : ℕ) := ∀ r, x ≤ r → r < x + dx → y ≤ r → r < y + dy → false
 
-theorem setN_default :
-  ∀ vl q c, fst (setN vl q c) = fst c
-Proof
-  induction vl; simpl; intros. auto. rewrite IHvl. auto
-Qed
+theorem getN_setN_disjoint {vl q c n p} :
+  interval_disjoint p n q (list.length vl) → getN n p (setN vl q c) = getN n p c := sorry
+
+theorem getN_setN_outside {vl q c n p} :
+  p + n ≤ q ∨ q + list.length vl ≤ p → getN n p (setN vl q c) = getN n p c :=
+by { intro h,
+     apply getN_setN_disjoint,
+     intros r hx hdx hy hdy,
+     cases h,
+     { exact not_le_of_gt hdx (le_trans a hy) },
+     { exact not_le_of_gt hdy (le_trans a hx) } }
 
 /- [store chunk m b ofs v] perform a write in memory state [m].
   Value [v] is stored at address [b] and offset [ofs].
   Return the updated memory store, or [None] if the accessed bytes
   are not writable. -/
 
-Program def store (chunk : memory_chunk) (m : mem) (b : block) (ofs : ℤ) (v : val) : option mem :=
-  if valid_access_dec m chunk b ofs Writable then
-    some (mkmem (PTree.set b
-                          (setN (encode_val chunk v) ofs (m.(mem_contents)#b))
-                          m.(mem_contents))
-                m.(mem_access)
-                m.(nextblock)
-                _ _ _)
-  else
-    none
-Next Obligation. apply access_max. Qed
-Next Obligation. apply nextblock_noaccess; auto. Qed
-Next Obligation
-  rewrite PTree.gsspec. destruct (peq b0 b)
-  rewrite setN_default. apply contents_default
-  apply contents_default
-Qed
+def store.val (chunk : memory_chunk) (m : mem) (b : block) (ofs : ℕ) (v : val) : mem :=
+{ mem_contents       := PTree.set b (setN (encode_val chunk v) ofs (m.get_block b)) m.mem_contents,
+  mem_access         := m.mem_access,
+  nextblock          := m.nextblock,
+  access_max         := m.access_max,
+  nextblock_noaccess := m.nextblock_noaccess }
+
+def store (chunk : memory_chunk) (m : mem) (b : block) (ofs : ℕ) (v : val) : option mem :=
+bnot (valid_access m chunk b ofs Writable) |> store.val chunk m b ofs v
 
 /- [storev chunk m addr v] is similar, but the address and offset are given
   as a single value [addr], which must be a pointer value. -/
 
-def storev (chunk : memory_chunk) (m : mem) (addr v : val) : option mem :=
-  match addr with
-| Vptr b ofs := store chunk m b (Ptrofs.unsigned ofs) v
-| _ := none
-  end
+def storev (chunk : memory_chunk) (m : mem) : val → val → option mem
+| (Vptr b ofs) v := store chunk m b (unsigned ofs) v
+| _            v := none
 
-/- [storebytes m b ofs bytes] stores the given list of bytes [bytes]
+/- [store_bytes m b ofs bytes] stores the given list of bytes [bytes]
   starting at location [(b, ofs)].  Returns updated memory state
   or [None] if the accessed locations are not writable. -/
 
-Program def storebytes (m : mem) (b : block) (ofs : ℤ) (bytes : list memval) : option mem :=
-  if range_perm_dec m b ofs (ofs + Z_of_nat (length bytes)) Cur Writable then
-    some (mkmem
-             (PTree.set b (setN bytes ofs (m.(mem_contents)#b)) m.(mem_contents))
-             m.(mem_access)
-             m.(nextblock)
-             _ _ _)
-  else
-    none
-Next Obligation. apply access_max. Qed
-Next Obligation. apply nextblock_noaccess; auto. Qed
-Next Obligation
-  rewrite PTree.gsspec. destruct (peq b0 b)
-  rewrite setN_default. apply contents_default
-  apply contents_default
-Qed
+def store_bytes (m : mem) (b : block) (ofs : ℕ) (bytes : list memval) : option mem :=
+bnot (range_perm m b ofs (ofs + bytes.length) Cur Writable) |>
+{ mem_contents       := PTree.set b (setN bytes ofs (m.get_block b)) m.mem_contents,
+  mem_access         := m.mem_access,
+  nextblock          := m.nextblock,
+  access_max         := m.access_max,
+  nextblock_noaccess := m.nextblock_noaccess }
 
 /- [drop_perm m b lo hi p] sets the max permissions of the byte range
     [(b, lo) ... (b, hi - 1)] to [p].  These bytes must have current permissions
     [Freeable] in the initial memory state [m].
     Returns updated memory state, or [None] if insufficient permissions. -/
 
-Program def drop_perm (m : mem) (b : block) (lo hi : ℤ) (p : permission) : option mem :=
-  if range_perm_dec m b lo hi Cur Freeable then
-    some (mkmem m.(mem_contents)
-                (PTree.set b
-                        (λ ofs k := if zle lo ofs && zlt ofs hi then some p else m.(mem_access)#b ofs k)
-                        m.(mem_access))
-                m.(nextblock) _ _ _)
-  else none
-Next Obligation
-  repeat rewrite PTree.gsspec. destruct (peq b0 b). subst b0
-  destruct (zle lo ofs && zlt ofs hi). red; auto with mem. apply access_max
-  apply access_max
-Qed
-Next Obligation
-  specialize (nextblock_noaccess m b0 ofs k H0). intros
-  rewrite PTree.gsspec. destruct (peq b0 b). subst b0
-  destruct (zle lo ofs). destruct (zlt ofs hi)
-  assert (perm m b ofs k Freeable). apply perm_cur. apply H; auto
-  unfold perm in H2. rewrite H1 in H2. contradiction
-  auto. auto. auto
-Qed
-Next Obligation
-  apply contents_default
-Qed
+def drop_perm (m : mem) (b : block) (lo hi : ℕ) (p : permission) : option mem :=
+if rp : range_perm m b lo hi Cur Freeable then some
+{ mem_contents       := m.mem_contents,
+  mem_access         := option.cases_on (m.mem_access#b) m.mem_access $
+    λ old, PTree.set b (λ ofs k, if lo ≤ ofs ∧ ofs < hi then some p else old ofs k) m.mem_access,
+  nextblock          := m.nextblock,
+  access_max         := λ b' ofs, by {
+    ginduction m.mem_access#b with h f; dsimp,
+    { exact m.access_max b' ofs },
+    { rw PTree.gsspec,
+      note := m.access_max b' ofs,
+      by_cases (b' = b) with bb; simp [bb, option.get_or_else]; simp [bb] at this,
+      { by_cases (lo ≤ ofs ∧ ofs < hi) with lh; simp [lh]; simp [h, option.get_or_else] at this,
+        { apply perm_order''.refl },
+        { assumption } },
+      { exact this } } },
+  nextblock_noaccess := λ b' ofs k hb, by {
+    ginduction m.mem_access#b with h f; dsimp,
+    { apply m.nextblock_noaccess ofs k hb },
+    { rw PTree.gsspec,
+      by_cases (b' = b) with bb; simp [bb, option.get_or_else],
+      { by_cases (lo ≤ ofs ∧ ofs < hi) with lh,
+        { cases lh with hl hh,
+          apply absurd (rp hl hh),
+          note := m.nextblock_noaccess ofs Cur hb,
+          simp [bb, h, option.get_or_else] at this,
+          simp [perm, mem.access, h, option.get_or_else, this],
+          exact not_false },
+        { note := m.nextblock_noaccess ofs k hb,
+          simp [bb, h, option.get_or_else] at this,
+          simp [lh, this] } },
+      { exact m.nextblock_noaccess ofs k hb } } } }
+else none
 
 /- * Properties of the memory operations -/
 
 /- Properties of the empty store. -/
 
-theorem nextblock_empty : nextblock empty = 1%positive
-Proof. reflexivity. Qed
+theorem nextblock_empty : (∅ : mem).nextblock = 1 := rfl
 
-theorem perm_empty : ∀ b ofs k p, ~perm empty b ofs k p
-Proof
-  intros. unfold perm, empty; simpl. rewrite PTree.gi. simpl. tauto
-Qed
+theorem perm_empty {b ofs k p} : ¬ perm ∅ b ofs k p := id
 
-theorem valid_access_empty : ∀ chunk b ofs p, ~valid_access empty chunk b ofs p
-Proof
-  intros. red; intros. elim (perm_empty b ofs Cur p). apply H
-  generalize (size_chunk_pos chunk); omega
-Qed
+theorem valid_access_empty {chunk b ofs p} : ¬ valid_access ∅ chunk b ofs p :=
+mt (valid_access_perm Cur) perm_empty
 
 /- ** Properties related to [load] -/
 
-theorem valid_access_load :
-  ∀ m chunk b ofs,
-  valid_access m chunk b ofs Readable →
-  ∃ v, load chunk m b ofs = some v
-Proof
-  intros. econstructor. unfold load. rewrite pred_dec_true; eauto
-Qed
+theorem valid_access_load {m chunk b ofs}
+  (h : valid_access m chunk b ofs Readable) : ∃ v, load chunk m b ofs = some v :=
+⟨_, by unfold load; rw if_pos h; refl⟩
 
-theorem load_valid_access :
-  ∀ m chunk b ofs v,
-  load chunk m b ofs = some v →
-  valid_access m chunk b ofs Readable
-Proof
-  intros until v. unfold load
-  destruct (valid_access_dec m chunk b ofs Readable); intros
-  auto
-  congruence
-Qed
+theorem load_valid_access {m chunk b ofs v}
+  (h : load chunk m b ofs = some v) : valid_access m chunk b ofs Readable :=
+by unfold load at h; by_contradiction; simp [a] at h; contradiction
 
-lemma load_result :
-  ∀ chunk m b ofs v,
-  load chunk m b ofs = some v →
-  v = decode_val chunk (getN (size_chunk_nat chunk) ofs (m.(mem_contents)#b))
-Proof
-  intros until v. unfold load
-  destruct (valid_access_dec m chunk b ofs Readable); intros
-  congruence
-  congruence
-Qed
+lemma load_result {chunk m b ofs v}
+  (h : load chunk m b ofs = some v) : v = decode_val chunk (getN chunk.size ofs (m.get_block b)) :=
+by { simp [load, load_valid_access h] at h,
+     note := show _ = some _, from h.symm,
+     injection this, assumption }
 
-Local Hint Resolve load_valid_access valid_access_load : mem
+theorem load_type {m chunk b ofs v} (h : load chunk m b ofs = some v) : v.has_type chunk.type :=
+by rw load_result h; apply decode_val_type
 
-theorem load_type :
-  ∀ m chunk b ofs v,
-  load chunk m b ofs = some v →
-  Val.has_type v (type_of_chunk chunk)
-Proof
-  intros. exploit load_result; eauto; intros. rewrite H0
-  apply decode_val_type
-Qed
+theorem load_cast {m chunk b ofs v} (h : load chunk m b ofs = some v) : decode_val_cast_type v chunk :=
+by rw load_result h; apply decode_val_cast
 
-theorem load_cast :
-  ∀ m chunk b ofs v,
-  load chunk m b ofs = some v →
-  match chunk with
-| Mint8signed := v = Val.sign_ext 8 v
-| Mint8unsigned := v = Val.zero_ext 8 v
-| Mint16signed := v = Val.sign_ext 16 v
-| Mint16unsigned := v = Val.zero_ext 16 v
-| _ := true
-  end
-Proof
-  intros. exploit load_result; eauto
-  set (l := getN (size_chunk_nat chunk) ofs m.(mem_contents)#b)
-  intros. subst v. apply decode_val_cast
-Qed
+theorem load_int8_signed_unsigned {m b ofs} :
+  load Mint8signed m b ofs = sign_ext W8 <$> load Mint8unsigned m b ofs := sorry
 
-theorem load_int8_signed_unsigned :
-  ∀ m b ofs,
-  load Mint8signed m b ofs = option_map (Val.sign_ext 8) (load Mint8unsigned m b ofs)
-Proof
-  intros. unfold load
-  change (size_chunk_nat Mint8signed) with (size_chunk_nat Mint8unsigned)
-  set (cl := getN (size_chunk_nat Mint8unsigned) ofs m.(mem_contents)#b)
-  destruct (valid_access_dec m Mint8signed b ofs Readable)
-  rewrite pred_dec_true; auto. unfold decode_val
-  destruct (proj_bytes cl); auto
-  simpl. decEq. decEq. rewrite Int.sign_ext_zero_ext. auto. compute; auto
-  rewrite pred_dec_false; auto
-Qed
+theorem load_int16_signed_unsigned {m b ofs} :
+  load Mint16signed m b ofs = sign_ext W16 <$> load Mint16unsigned m b ofs := sorry
 
-theorem load_int16_signed_unsigned :
-  ∀ m b ofs,
-  load Mint16signed m b ofs = option_map (Val.sign_ext 16) (load Mint16unsigned m b ofs)
-Proof
-  intros. unfold load
-  change (size_chunk_nat Mint16signed) with (size_chunk_nat Mint16unsigned)
-  set (cl := getN (size_chunk_nat Mint16unsigned) ofs m.(mem_contents)#b)
-  destruct (valid_access_dec m Mint16signed b ofs Readable)
-  rewrite pred_dec_true; auto. unfold decode_val
-  destruct (proj_bytes cl); auto
-  simpl. decEq. decEq. rewrite Int.sign_ext_zero_ext. auto. compute; auto
-  rewrite pred_dec_false; auto
-Qed
+/- ** Properties related to [load_bytes] -/
 
-/- ** Properties related to [loadbytes] -/
+theorem range_perm_load_bytes {m b ofs len}
+  (h : range_perm m b ofs (ofs + len) Cur Readable) : ∃ bytes, load_bytes m b ofs len = some bytes :=
+⟨_, by unfold load_bytes; rw if_pos h; refl⟩
 
-theorem range_perm_loadbytes :
-  ∀ m b ofs len,
-  range_perm m b ofs (ofs + len) Cur Readable →
-  ∃ bytes, loadbytes m b ofs len = some bytes
-Proof
-  intros. econstructor. unfold loadbytes. rewrite pred_dec_true; eauto
-Qed
+theorem load_bytes_range_perm {m b ofs len bytes}
+  (h : load_bytes m b ofs len = some bytes) : range_perm m b ofs (ofs + len) Cur Readable :=
+by unfold load_bytes at h; by_contradiction; simp [a] at h; contradiction
 
-theorem loadbytes_range_perm :
-  ∀ m b ofs len bytes,
-  loadbytes m b ofs len = some bytes →
-  range_perm m b ofs (ofs + len) Cur Readable
-Proof
-  intros until bytes. unfold loadbytes
-  destruct (range_perm_dec m b ofs (ofs + len) Cur Readable). auto. congruence
-Qed
+theorem load_bytes_getN {m b ofs n bytes}
+  (h : load_bytes m b ofs n = some bytes) :
+  getN n ofs (mem.get_block m b) = bytes :=
+by { note := load_bytes_range_perm h,
+     unfold load valid_access,
+     unfold load_bytes at h,
+     note := show some _ = _, by simp [this] at h; exact h,
+     injection this with this,
+     assumption }
 
-theorem loadbytes_load :
-  ∀ chunk m b ofs bytes,
-  loadbytes m b ofs (size_chunk chunk) = some bytes →
-  (align_chunk chunk | ofs) →
-  load chunk m b ofs = some(decode_val chunk bytes)
-Proof
-  unfold loadbytes, load; intros
-  destruct (range_perm_dec m b ofs (ofs + size_chunk chunk) Cur Readable);
-  try congruence
-  inv H. rewrite pred_dec_true. auto
-  split; auto
-Qed
+theorem load_bytes_load {chunk m b ofs bytes}
+  (h : load_bytes m b ofs (memory_chunk.size chunk) = some bytes) (al : chunk.align ∣ ofs) :
+  load chunk m b ofs = some (decode_val chunk bytes) :=
+by { note := load_bytes_range_perm h,
+     unfold load valid_access,
+     rw if_pos,
+     { rw load_bytes_getN h; refl },
+     { constructor; assumption } }
 
-theorem load_loadbytes :
-  ∀ chunk m b ofs v,
-  load chunk m b ofs = some v →
-  ∃ bytes, loadbytes m b ofs (size_chunk chunk) = some bytes
-             ∧ v = decode_val chunk bytes
-Proof
-  intros. exploit load_valid_access; eauto. intros [A B]
-  exploit load_result; eauto. intros
-  ∃ (getN (size_chunk_nat chunk) ofs m.(mem_contents)#b); split
-  unfold loadbytes. rewrite pred_dec_true; auto
-  auto
-Qed
+theorem load_load_bytes {chunk m b ofs v} (h : load chunk m b ofs = some v) :
+  ∃ bytes, load_bytes m b ofs chunk.size = some bytes ∧ v = decode_val chunk bytes :=
+let ⟨rp, al⟩ := load_valid_access h, ⟨bytes, h'⟩ := range_perm_load_bytes rp in
+⟨bytes, h', option.no_confusion (h.symm.trans (load_bytes_load h' al)) id⟩
 
-lemma getN_length :
-  ∀ c n p, length (getN n p c) = n
-Proof
-  induction n; simpl; intros. auto. decEq; auto
-Qed
+lemma getN_length {c n p} : (getN n p c).length = n :=
+by delta getN; generalize (num.succ' p) p; induction n; intro p; simph [getN']
 
-theorem loadbytes_length :
-  ∀ m b ofs n bytes,
-  loadbytes m b ofs n = some bytes →
-  length bytes = nat_of_Z n
-Proof
-  unfold loadbytes; intros
-  destruct (range_perm_dec m b ofs (ofs + n) Cur Readable); try congruence
-  inv H. apply getN_length
-Qed
+theorem load_bytes_length {m b ofs n bytes}
+  (h : load_bytes m b ofs n = some bytes) : bytes.length = n :=
+by rw [-load_bytes_getN h, getN_length]
 
-theorem loadbytes_empty :
-  ∀ m b ofs n,
-  n <= 0 → loadbytes m b ofs n = some nil
-Proof
-  intros. unfold loadbytes. rewrite pred_dec_true. rewrite nat_of_Z_neg; auto
-  red; intros. omegaContradiction
-Qed
+theorem load_bytes_empty {m b ofs} : load_bytes m b ofs 0 = some [] :=
+by {delta load_bytes, rw if_pos, refl, intros r h1 h2, exact absurd h1 (not_le_of_gt h2)}
 
-lemma getN_concat :
-  ∀ c n1 n2 p,
-  getN (n1 + n2)%ℕ p c = getN n1 p c ++ getN n2 (p + Z_of_nat n1) c
-Proof
-  induction n1; intros
-  simpl. decEq. omega
-  rewrite inj_S. simpl. decEq
-  replace (p + Zsucc (Z_of_nat n1)) with ((p + 1) + Z_of_nat n1) by omega
-  auto
-Qed
+lemma getN_concat {c n1 n2 p} : getN (n1 + n2) p c = getN n1 p c ++ getN n2 (p + n1) c := sorry
 
-theorem loadbytes_concat :
-  ∀ m b ofs n1 n2 bytes1 bytes2,
-  loadbytes m b ofs n1 = some bytes1 →
-  loadbytes m b (ofs + n1) n2 = some bytes2 →
-  n1 >= 0 → n2 >= 0 →
-  loadbytes m b ofs (n1 + n2) = some(bytes1 ++ bytes2)
-Proof
-  unfold loadbytes; intros
-  destruct (range_perm_dec m b ofs (ofs + n1) Cur Readable); try congruence
-  destruct (range_perm_dec m b (ofs + n1) (ofs + n1 + n2) Cur Readable); try congruence
-  rewrite pred_dec_true. rewrite nat_of_Z_plus; auto
-  rewrite getN_concat. rewrite nat_of_Z_eq; auto
-  congruence
-  red; intros
-  assert (ofs0 < ofs + n1 ∨ ofs0 >= ofs + n1) by omega
-  destruct H4. apply r; omega. apply r0; omega
-Qed
+theorem load_bytes_concat {m b ofs n1 n2 bytes1 bytes2} :
+  load_bytes m b ofs n1 = some bytes1 →
+  load_bytes m b (ofs + n1) n2 = some bytes2 →
+  load_bytes m b ofs (n1 + n2) = some (bytes1 ++ bytes2) := sorry
 
-theorem loadbytes_split :
-  ∀ m b ofs n1 n2 bytes,
-  loadbytes m b ofs (n1 + n2) = some bytes →
-  n1 >= 0 → n2 >= 0 →
+theorem load_bytes_split {m b ofs n1 n2 bytes} :
+  load_bytes m b ofs (n1 + n2) = some bytes →
   ∃ bytes1, ∃ bytes2,
-     loadbytes m b ofs n1 = some bytes1
-  ∧ loadbytes m b (ofs + n1) n2 = some bytes2
-  ∧ bytes = bytes1 ++ bytes2
-Proof
-  unfold loadbytes; intros
-  destruct (range_perm_dec m b ofs (ofs + (n1 + n2)) Cur Readable);
-  try congruence
-  rewrite nat_of_Z_plus in H; auto. rewrite getN_concat in H
-  rewrite nat_of_Z_eq in H; auto
-  repeat rewrite pred_dec_true
-  econstructor; econstructor
-  split. reflexivity. split. reflexivity. congruence
-  red; intros; apply r; omega
-  red; intros; apply r; omega
-Qed
+     load_bytes m b ofs n1 = some bytes1
+  ∧ load_bytes m b (ofs + n1) n2 = some bytes2
+  ∧ bytes = bytes1 ++ bytes2 := sorry
 
-theorem load_rep :
- ∀ ch m1 m2 b ofs v1 v2,
-  (∀ z, 0 <= z < size_chunk ch → ZMap.get (ofs + z) m1.(mem_contents)#b = ZMap.get (ofs + z) m2.(mem_contents)#b) →
-  load ch m1 b ofs = some v1 →
-  load ch m2 b ofs = some v2 →
-  v1 = v2
-Proof
-  intros
-  apply load_result in H0
-  apply load_result in H1
-  subst
-  f_equal
-  rewrite size_chunk_conv in H
-  remember (size_chunk_nat ch) as n; clear Heqn
-  revert ofs H; induction n; intros; simpl; auto
-  f_equal
-  rewrite inj_S in H
-  replace ofs with (ofs+0) by omega
-  apply H; omega
-  apply IHn
-  intros
-  rewrite <- Zplus_assoc
-  apply H
-  rewrite inj_S. omega
-Qed
+theorem load_rep {ch : memory_chunk} {m1 m2 : mem} {b ofs v1 v2} :
+  (∀ z < ch.size, get1 (ofs + z) (m1.get_block b) = get1 (ofs + z) (m2.get_block b)) →
+  load ch m1 b ofs = some v1 → load ch m2 b ofs = some v2 → v1 = v2 := sorry
 
-theorem load_int64_split :
-  ∀ m b ofs v,
-  load Mint64 m b ofs = some v → Archi.ptr64 = ff →
+theorem load_int64_split {m b ofs v} :
+  load Mint64 m b ofs = some v → ¬ archi.ptr64 →
   ∃ v1 v2,
-     load Mint32 m b ofs = some (if Archi.big_endian then v1 else v2)
-  ∧ load Mint32 m b (ofs + 4) = some (if Archi.big_endian then v2 else v1)
-  ∧ Val.lessdef v (Val.longofwords v1 v2)
-Proof
-  intros
-  exploit load_valid_access; eauto. intros [A B]. simpl in *
-  exploit load_loadbytes. eexact H. simpl. intros [bytes [LB EQ]]
-  change 8 with (4 + 4) in LB
-  exploit loadbytes_split. eexact LB. omega. omega
-  intros (bytes1 & bytes2 & LB1 & LB2 & APP)
-  change 4 with (size_chunk Mint32) in LB1
-  exploit loadbytes_load. eexact LB1
-  simpl. apply Zdivides_trans with 8; auto. ∃ 2; auto
-  intros L1
-  change 4 with (size_chunk Mint32) in LB2
-  exploit loadbytes_load. eexact LB2
-  simpl. apply Zdivide_plus_r. apply Zdivides_trans with 8; auto. ∃ 2; auto. ∃ 1; auto
-  intros L2
-  ∃ (decode_val Mint32 (if Archi.big_endian then bytes1 else bytes2));
-  ∃ (decode_val Mint32 (if Archi.big_endian then bytes2 else bytes1))
-  split. destruct Archi.big_endian; auto
-  split. destruct Archi.big_endian; auto
-  rewrite EQ. rewrite APP. apply decode_val_int64; auto
-  erewrite loadbytes_length; eauto. reflexivity
-  erewrite loadbytes_length; eauto. reflexivity
-Qed
+     load Mint32 m b ofs = some (if archi.big_endian then v1 else v2)
+  ∧ load Mint32 m b (ofs + 4) = some (if archi.big_endian then v2 else v1)
+  ∧ lessdef v (long_of_words v1 v2) := sorry
 
-lemma addressing_int64_split :
-  ∀ i,
-  Archi.ptr64 = ff →
-  (8 | Ptrofs.unsigned i) →
-  Ptrofs.unsigned (Ptrofs.add i (Ptrofs.of_int (Int.repr 4))) = Ptrofs.unsigned i + 4
-Proof
-  intros
-  rewrite Ptrofs.add_unsigned
-  replace (Ptrofs.unsigned (Ptrofs.of_int (Int.repr 4))) with (Int.unsigned (Int.repr 4))
-    by (symmetry; apply Ptrofs.agree32_of_int; auto)
-  change (Int.unsigned (Int.repr 4)) with 4. 
-  apply Ptrofs.unsigned_repr
-  exploit (Zdivide_interval (Ptrofs.unsigned i) Ptrofs.modulus 8)
-  omega. apply Ptrofs.unsigned_range. auto
-  ∃ (two_p (Ptrofs.zwordsize - 3))
-  unfold Ptrofs.modulus, Ptrofs.zwordsize, Ptrofs.wordsize
-  unfold Wordsize_Ptrofs.wordsize. destruct Archi.ptr64; reflexivity
-  unfold Ptrofs.max_unsigned. omega
-Qed
+lemma addressing_int64_split {i : ptrofs} : ¬ archi.ptr64 → 8 ∣ unsigned i →
+  unsigned (i + ptrofs.of_int (repr 4)) = unsigned i + 4 := sorry
 
-theorem loadv_int64_split :
-  ∀ m a v,
-  loadv Mint64 m a = some v → Archi.ptr64 = ff →
+theorem loadv_int64_split {m a v} : loadv Mint64 m a = some v → ¬ archi.ptr64 →
   ∃ v1 v2,
-     loadv Mint32 m a = some (if Archi.big_endian then v1 else v2)
-  ∧ loadv Mint32 m (Val.add a (Vint (Int.repr 4))) = some (if Archi.big_endian then v2 else v1)
-  ∧ Val.lessdef v (Val.longofwords v1 v2)
-Proof
-  intros. destruct a; simpl in H; inv H
-  exploit load_int64_split; eauto. intros (v1 & v2 & L1 & L2 & EQ)
-  unfold Val.add; rewrite H0
-  assert (NV : Ptrofs.unsigned (Ptrofs.add i (Ptrofs.of_int (Int.repr 4))) = Ptrofs.unsigned i + 4)
-  { apply addressing_int64_split; auto. 
-    exploit load_valid_access. eexact H2. intros [P Q]. auto. }
-  ∃ v1, v2
-Opaque Ptrofs.repr
-  split. auto
-  split. simpl. rewrite NV. auto
-  auto
-Qed
+     loadv Mint32 m a = some (if archi.big_endian then v1 else v2)
+  ∧ loadv Mint32 m (a + Vint (repr 4)) = some (if archi.big_endian then v2 else v1)
+  ∧ lessdef v (long_of_words v1 v2) := sorry
 
 /- ** Properties related to [store] -/
 
-theorem valid_access_store :
-  ∀ m1 chunk b ofs v,
-  valid_access m1 chunk b ofs Writable →
-  { m2 : mem | store chunk m1 b ofs v = some m2 }
-Proof
-  intros
-  unfold store
-  destruct (valid_access_dec m1 chunk b ofs Writable)
-  eauto
-  contradiction
-Defined
+def valid_access_store {m1 chunk b ofs v}
+  (h : valid_access m1 chunk b ofs Writable) : { m2 : mem // store chunk m1 b ofs v = some m2 } :=
+⟨_, by unfold store; rw to_bool_tt h; refl⟩
 
-Local Hint Resolve valid_access_store : mem
+section store
+parameters {chunk : memory_chunk} {m1 m2 : mem} {b : block} {ofs : ℕ} {v : val}
+parameter (STORE : store chunk m1 b ofs v = some m2)
+include STORE
 
-section STORE
-parameter chunk : memory_chunk
-parameter m1 : mem
-parameter b : block
-parameter ofs : ℤ
-parameter v : val
-parameter m2 : mem
-Hypothesis STORE : store chunk m1 b ofs v = some m2
+lemma store_val_eq : m2 = store.val chunk m1 b ofs v :=
+by {unfold store at STORE, cases to_bool (valid_access m1 chunk b ofs Writable); try {contradiction},
+    simp [option.rhoare] at STORE, injection STORE, exact h.symm}
 
-lemma store_access : mem_access m2 = mem_access m1
-Proof
-  unfold store in STORE. destruct ( valid_access_dec m1 chunk b ofs Writable); inv STORE
-  auto
-Qed
+lemma store_access : m2.mem_access = m1.mem_access :=
+by rw store_val_eq STORE; refl
 
 lemma store_mem_contents :
-  mem_contents m2 = PTree.set b (setN (encode_val chunk v) ofs m1.(mem_contents)#b) m1.(mem_contents)
-Proof
-  unfold store in STORE. destruct (valid_access_dec m1 chunk b ofs Writable); inv STORE
-  auto
-Qed
+  m2.mem_contents = PTree.set b (setN (encode_val chunk v) ofs (m1.get_block b)) m1.mem_contents :=
+by rw store_val_eq STORE; refl
 
-theorem perm_store_1 :
-  ∀ b' ofs' k p, perm m1 b' ofs' k p → perm m2 b' ofs' k p
-Proof
-  intros
- unfold perm in *. rewrite store_access; auto
-Qed
+theorem perm_store {b' ofs' k p} : perm m2 b' ofs' k p ↔ perm m1 b' ofs' k p :=
+by unfold perm mem.access; rw store_access STORE; exact iff.rfl
 
-theorem perm_store_2 :
-  ∀ b' ofs' k p, perm m2 b' ofs' k p → perm m1 b' ofs' k p
-Proof
-  intros. unfold perm in *.  rewrite store_access in H; auto
-Qed
+theorem nextblock_store : m2.nextblock = m1.nextblock :=
+by rw store_val_eq STORE; refl
 
-Local Hint Resolve perm_store_1 perm_store_2 : mem
+theorem store_valid_block {b'} : valid_block m2 b' ↔ valid_block m1 b' :=
+by unfold valid_block; rw nextblock_store STORE; exact iff.rfl
 
-theorem nextblock_store :
-  nextblock m2 = nextblock m1
-Proof
-  intros
-  unfold store in STORE. destruct ( valid_access_dec m1 chunk b ofs Writable); inv STORE
-  auto
-Qed
+theorem store_valid_access {chunk' b' ofs' p} :
+  valid_access m2 chunk' b' ofs' p ↔ valid_access m1 chunk' b' ofs' p :=
+and_congr (forall_congr $ λ_, forall_congr $ λ_, forall_congr $ λ_, perm_store) iff.rfl
 
-theorem store_valid_block_1 :
-  ∀ b', valid_block m1 b' → valid_block m2 b'
-Proof
-  unfold valid_block; intros. rewrite nextblock_store; auto
-Qed
+theorem store_valid_access' : valid_access m1 chunk b ofs Writable :=
+by unfold store at STORE; by_contradiction; rw to_bool_ff a at STORE; contradiction
 
-theorem store_valid_block_2 :
-  ∀ b', valid_block m2 b' → valid_block m1 b'
-Proof
-  unfold valid_block; intros. rewrite nextblock_store in H; auto
-Qed
+theorem load_store_similar {chunk' : memory_chunk} :
+  chunk'.size = chunk.size → chunk'.align ≤ chunk.align →
+  ∃ v', load chunk' m2 b ofs = some v' ∧ decode_encode_val v chunk chunk' v' := sorry
 
-Local Hint Resolve store_valid_block_1 store_valid_block_2 : mem
+theorem load_store_similar_2 {chunk' : memory_chunk} :
+  chunk'.size = chunk.size → chunk'.align ≤ chunk.align → chunk'.type = chunk.type →
+  load chunk' m2 b ofs = some (val.load_result chunk' v) :=
+λ hs ha ht, let ⟨v', h1, ed⟩ := load_store_similar hs ha in
+by rw [h1, decode_encode_val_similar ed ht.symm hs.symm]
 
-theorem store_valid_access_1 :
-  ∀ chunk' b' ofs' p,
-  valid_access m1 chunk' b' ofs' p → valid_access m2 chunk' b' ofs' p
-Proof
-  intros. inv H. constructor; try red; auto with mem
-Qed
+theorem load_store_same : load chunk m2 b ofs = some (val.load_result chunk v) :=
+load_store_similar_2 rfl (le_refl _) rfl
 
-theorem store_valid_access_2 :
-  ∀ chunk' b' ofs' p,
-  valid_access m2 chunk' b' ofs' p → valid_access m1 chunk' b' ofs' p
-Proof
-  intros. inv H. constructor; try red; auto with mem
-Qed
+theorem load_store_other {chunk' : memory_chunk} {b' ofs'} :
+  b' ≠ b ∨ ofs' + chunk'.size ≤ ofs ∨ ofs + chunk.size ≤ ofs' →
+  load chunk' m2 b' ofs' = load chunk' m1 b' ofs' := sorry
 
-theorem store_valid_access_3 :
-  valid_access m1 chunk b ofs Writable
-Proof
-  unfold store in STORE. destruct (valid_access_dec m1 chunk b ofs Writable)
-  auto
-  congruence
-Qed
+theorem load_bytes_store_same : load_bytes m2 b ofs chunk.size = some (encode_val chunk v) := sorry
 
-Local Hint Resolve store_valid_access_1 store_valid_access_2 store_valid_access_3 : mem
+theorem load_bytes_store_other {b' ofs' n} :
+  b' ≠ b ∨ n = 0 ∨ ofs' + n ≤ ofs ∨ ofs + chunk.size ≤ ofs' →
+  load_bytes m2 b' ofs' n = load_bytes m1 b' ofs' n := sorry
 
-theorem load_store_similar :
-  ∀ chunk',
-  size_chunk chunk' = size_chunk chunk →
-  align_chunk chunk' <= align_chunk chunk →
-  ∃ v', load chunk' m2 b ofs = some v' ∧ decode_encode_val v chunk chunk' v'
-Proof
-  intros
-  exploit (valid_access_load m2 chunk')
-    eapply valid_access_compat. symmetry; eauto. auto. eauto with mem
-  intros [v' LOAD]
-  ∃ v'; split; auto
-  exploit load_result; eauto. intros B
-  rewrite B. rewrite store_mem_contents; simpl
-  rewrite PTree.gss
-  replace (size_chunk_nat chunk') with (length (encode_val chunk v))
-  rewrite getN_setN_same. apply decode_encode_val_general
-  rewrite encode_val_length. repeat rewrite size_chunk_conv in H
-  apply inj_eq_rev; auto
-Qed
+lemma setN_in {vl p q c} : p ≤ q → q < p + list.length vl → get1 q (setN vl p c) ∈ vl := sorry
 
-theorem load_store_similar_2 :
-  ∀ chunk',
-  size_chunk chunk' = size_chunk chunk →
-  align_chunk chunk' <= align_chunk chunk →
-  type_of_chunk chunk' = type_of_chunk chunk →
-  load chunk' m2 b ofs = some (Val.load_result chunk' v)
-Proof
-  intros. destruct (load_store_similar chunk') as [v' [A B]]; auto
-  rewrite A. decEq. eapply decode_encode_val_similar with (chunk1 := chunk); eauto
-Qed
+lemma getN_in {c q n p} : p ≤ q → q < p + n → get1 q c ∈ getN n p c := sorry
 
-theorem load_store_same :
-  load chunk m2 b ofs = some (Val.load_result chunk v)
-Proof
-  apply load_store_similar_2; auto. omega
-Qed
+end store
 
-theorem load_store_other :
-  ∀ chunk' b' ofs',
-  b' ≠ b
-  ∨ ofs' + size_chunk chunk' <= ofs
-  ∨ ofs + size_chunk chunk <= ofs' →
-  load chunk' m2 b' ofs' = load chunk' m1 b' ofs'
-Proof
-  intros. unfold load
-  destruct (valid_access_dec m1 chunk' b' ofs' Readable)
-  rewrite pred_dec_true
-  decEq. decEq. rewrite store_mem_contents; simpl
-  rewrite PTree.gsspec. destruct (peq b' b). subst b'
-  apply getN_setN_outside. rewrite encode_val_length. repeat rewrite <- size_chunk_conv
-  intuition
-  auto
-  eauto with mem
-  rewrite pred_dec_false. auto
-  eauto with mem
-Qed
-
-theorem loadbytes_store_same :
-  loadbytes m2 b ofs (size_chunk chunk) = some(encode_val chunk v)
-Proof
-  intros
-  assert (valid_access m2 chunk b ofs Readable) by eauto with mem
-  unfold loadbytes. rewrite pred_dec_true. rewrite store_mem_contents; simpl
-  rewrite PTree.gss
-  replace (nat_of_Z (size_chunk chunk)) with (length (encode_val chunk v))
-  rewrite getN_setN_same. auto
-  rewrite encode_val_length. auto
-  apply H
-Qed
-
-theorem loadbytes_store_other :
-  ∀ b' ofs' n,
-  b' ≠ b
-  ∨ n <= 0
-  ∨ ofs' + n <= ofs
-  ∨ ofs + size_chunk chunk <= ofs' →
-  loadbytes m2 b' ofs' n = loadbytes m1 b' ofs' n
-Proof
-  intros. unfold loadbytes
-  destruct (range_perm_dec m1 b' ofs' (ofs' + n) Cur Readable)
-  rewrite pred_dec_true
-  decEq. rewrite store_mem_contents; simpl
-  rewrite PTree.gsspec. destruct (peq b' b). subst b'
-  destruct H. congruence
-  destruct (zle n 0) as [z | n0]
-  rewrite (nat_of_Z_neg _ z). auto
-  destruct H. omegaContradiction
-  apply getN_setN_outside. rewrite encode_val_length. rewrite <- size_chunk_conv
-  rewrite nat_of_Z_eq. auto. omega
-  auto
-  red; intros. eauto with mem
-  rewrite pred_dec_false. auto
-  red; intro; elim n0; red; intros; eauto with mem
-Qed
-
-lemma setN_in :
-  ∀ vl p q c,
-  p <= q < p + Z_of_nat (length vl) →
-  In (ZMap.get q (setN vl p c)) vl
-Proof
-  induction vl; intros
-  simpl in H. omegaContradiction
-  simpl length in H. rewrite inj_S in H. simpl
-  destruct (zeq p q). subst q. rewrite setN_outside. rewrite ZMap.gss
-  auto with coqlib. omega
-  right. apply IHvl. omega
-Qed
-
-lemma getN_in :
-  ∀ c q n p,
-  p <= q < p + Z_of_nat n →
-  In (ZMap.get q c) (getN n p c)
-Proof
-  induction n; intros
-  simpl in H; omegaContradiction
-  rewrite inj_S in H. simpl. destruct (zeq p q)
-  subst q. auto
-  right. apply IHn. omega
-Qed
-
-end STORE
-
-Local Hint Resolve perm_store_1 perm_store_2 : mem
-Local Hint Resolve store_valid_block_1 store_valid_block_2 : mem
-Local Hint Resolve store_valid_access_1 store_valid_access_2
-             store_valid_access_3 : mem
-
-lemma load_store_overlap :
-  ∀ chunk m1 b ofs v m2 chunk' ofs' v',
-  store chunk m1 b ofs v = some m2 →
-  load chunk' m2 b ofs' = some v' →
-  ofs' + size_chunk chunk' > ofs →
-  ofs + size_chunk chunk > ofs' →
+lemma load_store_overlap {chunk m1 b ofs v m2 chunk' ofs' v'} :
+  store chunk m1 b ofs v = some m2 → load chunk' m2 b ofs' = some v' →
+  ofs' + chunk'.size > ofs → ofs + chunk.size > ofs' →
   ∃ mv1 mvl mv1' mvl',
       shape_encoding chunk v (mv1 :: mvl)
   ∧  shape_decoding chunk' (mv1' :: mvl') v'
   ∧  (   (ofs' = ofs ∧ mv1' = mv1)
-       ∨ (ofs' > ofs ∧ In mv1' mvl)
-       ∨ (ofs' < ofs ∧ In mv1 mvl'))
-Proof
-  intros
-  exploit load_result; eauto. erewrite store_mem_contents by eauto; simpl
-  rewrite PTree.gss
-  set (c := (mem_contents m1)#b). intros V'
-  destruct (size_chunk_nat_pos chunk) as [sz SIZE]
-  destruct (size_chunk_nat_pos chunk') as [sz' SIZE']
-  destruct (encode_val chunk v) as [ | mv1 mvl] eqn:ENC
-  generalize (encode_val_length chunk v); rewrite ENC; simpl; congruence
-  set (c' := setN (mv1::mvl) ofs c) in *
-  ∃ mv1, mvl, (ZMap.get ofs' c'), (getN sz' (ofs' + 1) c')
-  split. rewrite <- ENC. apply encode_val_shape
-  split. rewrite V', SIZE'. apply decode_val_shape
-  destruct (zeq ofs' ofs)
-- subst ofs'. left; split. auto. unfold c'. simpl
-  rewrite setN_outside by omega. apply ZMap.gss
-- right. destruct (zlt ofs ofs')
-/- If ofs < ofs':  the load reads (at ofs') a continuation byte from the write.
-       ofs   ofs'   ofs+|chunk|
-        [-------------------]       write
-             [-------------------]  read
--/
-+ left; split. omega. unfold c'. simpl. apply setN_in
-  assert (ℤ.of_nat (length (mv1 :: mvl)) = size_chunk chunk)
-  { rewrite <- ENC; rewrite encode_val_length. rewrite size_chunk_conv; auto. }
-  simpl length in H3. rewrite inj_S in H3. omega
-/- If ofs > ofs':  the load reads (at ofs) the first byte from the write.
-       ofs'   ofs   ofs'+|chunk'|
-               [-------------------]  write
-         [----------------]           read
--/
-+ right; split. omega. replace mv1 with (ZMap.get ofs c')
-  apply getN_in
-  assert (size_chunk chunk' = Zsucc (ℤ.of_nat sz'))
-  { rewrite size_chunk_conv. rewrite SIZE'. rewrite inj_S; auto. }
-  omega
-  unfold c'. simpl. rewrite setN_outside by omega. apply ZMap.gss
-Qed
+       ∨ (ofs' > ofs ∧ mv1' ∈ mvl)
+       ∨ (ofs' < ofs ∧ mv1 ∈ mvl')) := sorry
 
-def compat_pointer_chunks (chunk1 chunk2 : memory_chunk) : Prop :=
-  match chunk1, chunk2 with
-| (Mint32 | Many32), (Mint32 | Many32) := true
-| (Mint64 | Many64), (Mint64 | Many64) := true
-| _, _ := false
-  end
+def compat_pointer_chunks : memory_chunk → memory_chunk → bool
+| Mint32 Mint32 := tt
+| Mint32 Many32 := tt
+| Many32 Mint32 := tt
+| Many32 Many32 := tt
+| Mint64 Mint64 := tt
+| Mint64 Many64 := tt
+| Many64 Mint64 := tt
+| Many64 Many64 := tt
+| _      _      := ff
 
-lemma compat_pointer_chunks_true :
-  ∀ chunk1 chunk2,
+lemma compat_pointer_chunks_true {chunk1 chunk2} :
   (chunk1 = Mint32 ∨ chunk1 = Many32 ∨ chunk1 = Mint64 ∨ chunk1 = Many64) →
   (chunk2 = Mint32 ∨ chunk2 = Many32 ∨ chunk2 = Mint64 ∨ chunk2 = Many64) →
-  quantity_chunk chunk1 = quantity_chunk chunk2 →
-  compat_pointer_chunks chunk1 chunk2
-Proof
-  intros. destruct H as [P|[P|[P|P]]]; destruct H0 as [Q|[Q|[Q|Q]]];
-  subst; red; auto; discriminate
-Qed
+  quantity_chunk chunk1 = quantity_chunk chunk2 → compat_pointer_chunks chunk1 chunk2 :=
+by cases chunk1; cases chunk2; exact dec_trivial
 
-theorem load_pointer_store :
-  ∀ chunk m1 b ofs v m2 chunk' b' ofs' v_b v_o,
+theorem load_pointer_store {chunk m1 b ofs v m2 chunk' b' ofs' vb vo} :
   store chunk m1 b ofs v = some m2 →
-  load chunk' m2 b' ofs' = some(Vptr v_b v_o) →
-  (v = Vptr v_b v_o ∧ compat_pointer_chunks chunk chunk' ∧ b' = b ∧ ofs' = ofs)
-  ∨ (b' ≠ b ∨ ofs' + size_chunk chunk' <= ofs ∨ ofs + size_chunk chunk <= ofs')
-Proof
-  intros
-  destruct (peq b' b); auto. subst b'
-  destruct (zle (ofs' + size_chunk chunk') ofs); auto
-  destruct (zle (ofs + size_chunk chunk) ofs'); auto
-  exploit load_store_overlap; eauto
-  intros (mv1 & mvl & mv1' & mvl' & ENC & DEC & CASES)
-  inv DEC; try contradiction
-  destruct CASES as [(A & B) | [(A & B) | (A & B)]]
-- /- Same offset -/
-  subst. inv ENC
-  assert (chunk = Mint32 ∨ chunk = Many32 ∨ chunk = Mint64 ∨ chunk = Many64)
-  by (destruct chunk; auto || contradiction)
-  left; split. rewrite H3
-  destruct H4 as [P|[P|[P|P]]]; subst chunk'; destruct v0; simpl in H3;
-  try congruence; destruct Archi.ptr64; congruence
-  split. apply compat_pointer_chunks_true; auto
-  auto
-- /- ofs' > ofs -/
-  inv ENC
-  + exploit H10; eauto. intros (j & P & Q). inv P. congruence
-  + exploit H8; eauto. intros (n & P); congruence
-  + exploit H2; eauto. congruence
-- /- ofs' < ofs -/
-  exploit H7; eauto. intros (j & P & Q). subst mv1. inv ENC. congruence
-Qed
+  load chunk' m2 b' ofs' = some (Vptr vb vo) →
+  (v = Vptr vb vo ∧ compat_pointer_chunks chunk chunk' ∧ b' = b ∧ ofs' = ofs)
+  ∨ (b' ≠ b ∨ ofs' + chunk'.size ≤ ofs ∨ ofs + chunk.size ≤ ofs') := sorry
 
-theorem load_store_pointer_overlap :
-  ∀ chunk m1 b ofs v_b v_o m2 chunk' ofs' v,
-  store chunk m1 b ofs (Vptr v_b v_o) = some m2 →
-  load chunk' m2 b ofs' = some v →
-  ofs' ≠ ofs →
-  ofs' + size_chunk chunk' > ofs →
-  ofs + size_chunk chunk > ofs' →
-  v = Vundef
-Proof
-  intros
-  exploit load_store_overlap; eauto
-  intros (mv1 & mvl & mv1' & mvl' & ENC & DEC & CASES)
-  destruct CASES as [(A & B) | [(A & B) | (A & B)]]
-- congruence
-- inv ENC
-  + exploit H9; eauto. intros (j & P & Q). subst mv1'. inv DEC. congruence. auto
-  + contradiction
-  + exploit H5; eauto. intros; subst. inv DEC; auto
-- inv DEC
-  + exploit H10; eauto. intros (j & P & Q). subst mv1. inv ENC. congruence
-  + exploit H8; eauto. intros (n & P). subst mv1. inv ENC. contradiction
-  + auto
-Qed
+theorem load_store_pointer_overlap {chunk m1 b ofs vb vo m2 chunk' ofs' v} :
+  store chunk m1 b ofs (Vptr vb vo) = some m2 → load chunk' m2 b ofs' = some v →
+  ofs' ≠ ofs → ofs' + chunk'.size > ofs → ofs + chunk.size > ofs' → v = Vundef := sorry
 
-theorem load_store_pointer_mismatch :
-  ∀ chunk m1 b ofs v_b v_o m2 chunk' v,
-  store chunk m1 b ofs (Vptr v_b v_o) = some m2 →
-  load chunk' m2 b ofs = some v →
-  ~compat_pointer_chunks chunk chunk' →
-  v = Vundef
-Proof
-  intros
-  exploit load_store_overlap; eauto
-  generalize (size_chunk_pos chunk'); omega
-  generalize (size_chunk_pos chunk); omega
-  intros (mv1 & mvl & mv1' & mvl' & ENC & DEC & CASES)
-  destruct CASES as [(A & B) | [(A & B) | (A & B)]]; try omegaContradiction
-  inv ENC; inv DEC; auto
-- elim H1. apply compat_pointer_chunks_true; auto
-- contradiction
-Qed
+theorem load_store_pointer_mismatch {chunk m1 b ofs vb vo m2 chunk' v} :
+  store chunk m1 b ofs (Vptr vb vo) = some m2 → load chunk' m2 b ofs = some v →
+  ¬ compat_pointer_chunks chunk chunk' → v = Vundef := sorry
 
-lemma store_similar_chunks :
-  ∀ chunk1 chunk2 v1 v2 m b ofs,
-  encode_val chunk1 v1 = encode_val chunk2 v2 →
-  align_chunk chunk1 = align_chunk chunk2 →
-  store chunk1 m b ofs v1 = store chunk2 m b ofs v2
-Proof
-  intros. unfold store
-  assert (size_chunk chunk1 = size_chunk chunk2)
-    repeat rewrite size_chunk_conv
-    rewrite <- (encode_val_length chunk1 v1)
-    rewrite <- (encode_val_length chunk2 v2)
-    congruence
-  unfold store
-  destruct (valid_access_dec m chunk1 b ofs Writable);
-  destruct (valid_access_dec m chunk2 b ofs Writable); auto
-  f_equal. apply mkmem_ext; auto. congruence
-  elim n. apply valid_access_compat with chunk1; auto. omega
-  elim n. apply valid_access_compat with chunk2; auto. omega
-Qed
+lemma store_similar_chunks {chunk1 chunk2 v1 v2 m b ofs} :
+  encode_val chunk1 v1 = encode_val chunk2 v2 → chunk1.align = chunk2.align →
+  store chunk1 m b ofs v1 = store chunk2 m b ofs v2 := sorry
 
-theorem store_signed_unsigned_8 :
-  ∀ m b ofs v,
-  store Mint8signed m b ofs v = store Mint8unsigned m b ofs v
-Proof. intros. apply store_similar_chunks. apply encode_val_int8_signed_unsigned. auto. Qed
+theorem store_signed_unsigned_8 {m b ofs v} :
+  store Mint8signed m b ofs v = store Mint8unsigned m b ofs v := sorry
 
-theorem store_signed_unsigned_16 :
-  ∀ m b ofs v,
-  store Mint16signed m b ofs v = store Mint16unsigned m b ofs v
-Proof. intros. apply store_similar_chunks. apply encode_val_int16_signed_unsigned. auto. Qed
+theorem store_signed_unsigned_16 {m b ofs v} :
+  store Mint16signed m b ofs v = store Mint16unsigned m b ofs v := sorry
 
-theorem store_int8_zero_ext :
-  ∀ m b ofs n,
-  store Mint8unsigned m b ofs (Vint (Int.zero_ext 8 n)) =
-  store Mint8unsigned m b ofs (Vint n)
-Proof. intros. apply store_similar_chunks. apply encode_val_int8_zero_ext. auto. Qed
+theorem store_int8_zero_ext {m b ofs n} :
+  store Mint8unsigned m b ofs (Vint (zero_ext 8 n)) =
+  store Mint8unsigned m b ofs (Vint n) := sorry
 
-theorem store_int8_sign_ext :
-  ∀ m b ofs n,
-  store Mint8signed m b ofs (Vint (Int.sign_ext 8 n)) =
-  store Mint8signed m b ofs (Vint n)
-Proof. intros. apply store_similar_chunks. apply encode_val_int8_sign_ext. auto. Qed
+theorem store_int8_sign_ext {m b ofs n} :
+  store Mint8signed m b ofs (Vint (sign_ext W8 n)) =
+  store Mint8signed m b ofs (Vint n) := sorry
 
-theorem store_int16_zero_ext :
-  ∀ m b ofs n,
-  store Mint16unsigned m b ofs (Vint (Int.zero_ext 16 n)) =
-  store Mint16unsigned m b ofs (Vint n)
-Proof. intros. apply store_similar_chunks. apply encode_val_int16_zero_ext. auto. Qed
+theorem store_int16_zero_ext {m b ofs n} :
+  store Mint16unsigned m b ofs (Vint (zero_ext 16 n)) =
+  store Mint16unsigned m b ofs (Vint n) := sorry
 
-theorem store_int16_sign_ext :
-  ∀ m b ofs n,
-  store Mint16signed m b ofs (Vint (Int.sign_ext 16 n)) =
-  store Mint16signed m b ofs (Vint n)
-Proof. intros. apply store_similar_chunks. apply encode_val_int16_sign_ext. auto. Qed
+theorem store_int16_sign_ext {m b ofs n} :
+  store Mint16signed m b ofs (Vint (sign_ext W16 n)) =
+  store Mint16signed m b ofs (Vint n) := sorry
 
-/-
-Theorem store_float64al32:
-  forall m b ofs v m',
-  store Mfloat64 m b ofs v = Some m' → store Mfloat64al32 m b ofs v = Some m'.
-Proof.
-  unfold store; intros.
-  destruct (valid_access_dec m Mfloat64 b ofs Writable); try discriminate.
-  destruct (valid_access_dec m Mfloat64al32 b ofs Writable).
-  rewrite <- H. f_equal. apply mkmem_ext; auto.
-  elim n. apply valid_access_compat with Mfloat64; auto. simpl; omega.
-Qed.
 
-Theorem storev_float64al32:
-  forall m a v m',
-  storev Mfloat64 m a v = Some m' → storev Mfloat64al32 m a v = Some m'.
-Proof.
-  unfold storev; intros. destruct a; auto. apply store_float64al32; auto.
-Qed.
--/
+/- ** Properties related to [store_bytes]. -/
 
-/- ** Properties related to [storebytes]. -/
+theorem range_perm_store_bytes {m1 b ofs bytes}
+  (h : range_perm m1 b ofs (ofs + list.length bytes) Cur Writable) :
+  { m2 : mem // store_bytes m1 b ofs bytes = some m2 } :=
+⟨_, by unfold store_bytes; rw to_bool_tt h; refl⟩
 
-theorem range_perm_storebytes :
-  ∀ m1 b ofs bytes,
-  range_perm m1 b ofs (ofs + Z_of_nat (length bytes)) Cur Writable →
-  { m2 : mem | storebytes m1 b ofs bytes = some m2 }
-Proof
-  intros. unfold storebytes
-  destruct (range_perm_dec m1 b ofs (ofs + Z_of_nat (length bytes)) Cur Writable)
-  econstructor; reflexivity
-  contradiction
-Defined
+theorem store_bytes_store {m1 b ofs chunk v m2} :
+  store_bytes m1 b ofs (encode_val chunk v) = some m2 →
+  chunk.align ∣ ofs → store chunk m1 b ofs v = some m2 := sorry
 
-theorem storebytes_store :
-  ∀ m1 b ofs chunk v m2,
-  storebytes m1 b ofs (encode_val chunk v) = some m2 →
-  (align_chunk chunk | ofs) →
-  store chunk m1 b ofs v = some m2
-Proof
-  unfold storebytes, store. intros
-  destruct (range_perm_dec m1 b ofs (ofs + Z_of_nat (length (encode_val chunk v))) Cur Writable); inv H
-  destruct (valid_access_dec m1 chunk b ofs Writable)
-  f_equal. apply mkmem_ext; auto
-  elim n. constructor; auto
-  rewrite encode_val_length in r. rewrite size_chunk_conv. auto
-Qed
-
-theorem store_storebytes :
-  ∀ m1 b ofs chunk v m2,
+theorem store_store_bytes {m1 b ofs chunk v m2} :
   store chunk m1 b ofs v = some m2 →
-  storebytes m1 b ofs (encode_val chunk v) = some m2
-Proof
-  unfold storebytes, store. intros
-  destruct (valid_access_dec m1 chunk b ofs Writable); inv H
-  destruct (range_perm_dec m1 b ofs (ofs + Z_of_nat (length (encode_val chunk v))) Cur Writable)
-  f_equal. apply mkmem_ext; auto
-  destruct v0.  elim n
-  rewrite encode_val_length. rewrite <- size_chunk_conv. auto
-Qed
+  store_bytes m1 b ofs (encode_val chunk v) = some m2 := sorry
 
-section STOREBYTES
+section store_bytes
 parameter m1 : mem
 parameter b : block
 parameter ofs : ℤ
 parameter bytes : list memval
 parameter m2 : mem
-Hypothesis STORE : storebytes m1 b ofs bytes = some m2
+Hypothesis STORE : store_bytes m1 b ofs bytes = some m2
 
-lemma storebytes_access : mem_access m2 = mem_access m1
+lemma store_bytes_access : mem_access m2 = mem_access m1
 Proof
-  unfold storebytes in STORE
+  unfold store_bytes in STORE
   destruct (range_perm_dec m1 b ofs (ofs + Z_of_nat (length bytes)) Cur Writable);
   inv STORE
   auto
 Qed
 
-lemma storebytes_mem_contents :
+lemma store_bytes_mem_contents :
    mem_contents m2 = PTree.set b (setN bytes ofs m1.(mem_contents)#b) m1.(mem_contents)
 Proof
-  unfold storebytes in STORE
+  unfold store_bytes in STORE
   destruct (range_perm_dec m1 b ofs (ofs + Z_of_nat (length bytes)) Cur Writable);
   inv STORE
   auto
 Qed
 
-theorem perm_storebytes_1 :
+theorem perm_store_bytes_1 :
   ∀ b' ofs' k p, perm m1 b' ofs' k p → perm m2 b' ofs' k p
 Proof
-  intros. unfold perm in *. rewrite storebytes_access; auto
+  intros. unfold perm in *. rewrite store_bytes_access; auto
 Qed
 
-theorem perm_storebytes_2 :
+theorem perm_store_bytes_2 :
   ∀ b' ofs' k p, perm m2 b' ofs' k p → perm m1 b' ofs' k p
 Proof
-  intros. unfold perm in *. rewrite storebytes_access in H; auto
+  intros. unfold perm in *. rewrite store_bytes_access in H; auto
 Qed
 
-Local Hint Resolve perm_storebytes_1 perm_storebytes_2 : mem
+Local Hint Resolve perm_store_bytes_1 perm_store_bytes_2 : mem
 
-theorem storebytes_valid_access_1 :
+theorem store_bytes_valid_access_1 :
   ∀ chunk' b' ofs' p,
   valid_access m1 chunk' b' ofs' p → valid_access m2 chunk' b' ofs' p
 Proof
   intros. inv H. constructor; try red; auto with mem
 Qed
 
-theorem storebytes_valid_access_2 :
+theorem store_bytes_valid_access_2 :
   ∀ chunk' b' ofs' p,
   valid_access m2 chunk' b' ofs' p → valid_access m1 chunk' b' ofs' p
 Proof
   intros. inv H. constructor; try red; auto with mem
 Qed
 
-Local Hint Resolve storebytes_valid_access_1 storebytes_valid_access_2 : mem
+Local Hint Resolve store_bytes_valid_access_1 store_bytes_valid_access_2 : mem
 
-theorem nextblock_storebytes :
+theorem nextblock_store_bytes :
   nextblock m2 = nextblock m1
 Proof
   intros
-  unfold storebytes in STORE
+  unfold store_bytes in STORE
   destruct (range_perm_dec m1 b ofs (ofs + Z_of_nat (length bytes)) Cur Writable);
   inv STORE
   auto
 Qed
 
-theorem storebytes_valid_block_1 :
+theorem store_bytes_valid_block_1 :
   ∀ b', valid_block m1 b' → valid_block m2 b'
 Proof
-  unfold valid_block; intros. rewrite nextblock_storebytes; auto
+  unfold valid_block; intros. rewrite nextblock_store_bytes; auto
 Qed
 
-theorem storebytes_valid_block_2 :
+theorem store_bytes_valid_block_2 :
   ∀ b', valid_block m2 b' → valid_block m1 b'
 Proof
-  unfold valid_block; intros. rewrite nextblock_storebytes in H; auto
+  unfold valid_block; intros. rewrite nextblock_store_bytes in H; auto
 Qed
 
-Local Hint Resolve storebytes_valid_block_1 storebytes_valid_block_2 : mem
+Local Hint Resolve store_bytes_valid_block_1 store_bytes_valid_block_2 : mem
 
-theorem storebytes_range_perm :
+theorem store_bytes_range_perm :
   range_perm m1 b ofs (ofs + Z_of_nat (length bytes)) Cur Writable
 Proof
   intros
-  unfold storebytes in STORE
+  unfold store_bytes in STORE
   destruct (range_perm_dec m1 b ofs (ofs + Z_of_nat (length bytes)) Cur Writable);
   inv STORE
   auto
 Qed
 
-theorem loadbytes_storebytes_same :
-  loadbytes m2 b ofs (Z_of_nat (length bytes)) = some bytes
+theorem load_bytes_store_bytes_same :
+  load_bytes m2 b ofs (Z_of_nat (length bytes)) = some bytes
 Proof
-  intros. assert (STORE2:=STORE). unfold storebytes in STORE2. unfold loadbytes. 
+  intros. assert (STORE2:=STORE). unfold store_bytes in STORE2. unfold load_bytes. 
   destruct (range_perm_dec m1 b ofs (ofs + Z_of_nat (length bytes)) Cur Writable);
   try discriminate
   rewrite pred_dec_true
@@ -1397,16 +816,16 @@ Proof
   red; eauto with mem
 Qed
 
-theorem loadbytes_storebytes_disjoint :
+theorem load_bytes_store_bytes_disjoint :
   ∀ b' ofs' len,
   len >= 0 →
   b' ≠ b ∨ Intv.disjoint (ofs', ofs' + len) (ofs, ofs + Z_of_nat (length bytes)) →
-  loadbytes m2 b' ofs' len = loadbytes m1 b' ofs' len
+  load_bytes m2 b' ofs' len = load_bytes m1 b' ofs' len
 Proof
-  intros. unfold loadbytes
+  intros. unfold load_bytes
   destruct (range_perm_dec m1 b' ofs' (ofs' + len) Cur Readable)
   rewrite pred_dec_true
-  rewrite storebytes_mem_contents. decEq
+  rewrite store_bytes_mem_contents. decEq
   rewrite PTree.gsspec. destruct (peq b' b). subst b'
   apply getN_setN_disjoint. rewrite nat_of_Z_eq; auto. intuition congruence
   auto
@@ -1415,19 +834,19 @@ Proof
   red; intros; elim n. red; auto with mem
 Qed
 
-theorem loadbytes_storebytes_other :
+theorem load_bytes_store_bytes_other :
   ∀ b' ofs' len,
   len >= 0 →
   b' ≠ b
   ∨ ofs' + len <= ofs
   ∨ ofs + Z_of_nat (length bytes) <= ofs' →
-  loadbytes m2 b' ofs' len = loadbytes m1 b' ofs' len
+  load_bytes m2 b' ofs' len = load_bytes m1 b' ofs' len
 Proof
-  intros. apply loadbytes_storebytes_disjoint; auto
+  intros. apply load_bytes_store_bytes_disjoint; auto
   destruct H0; auto. right. apply Intv.disjoint_range; auto
 Qed
 
-theorem load_storebytes_other :
+theorem load_store_bytes_other :
   ∀ chunk b' ofs',
   b' ≠ b
   ∨ ofs' + size_chunk chunk <= ofs
@@ -1437,7 +856,7 @@ Proof
   intros. unfold load
   destruct (valid_access_dec m1 chunk b' ofs' Readable)
   rewrite pred_dec_true
-  rewrite storebytes_mem_contents. decEq
+  rewrite store_bytes_mem_contents. decEq
   rewrite PTree.gsspec. destruct (peq b' b). subst b'
   rewrite getN_setN_outside. auto. rewrite <- size_chunk_conv. intuition congruence
   auto
@@ -1457,14 +876,14 @@ Proof
   simpl length. rewrite inj_S. simpl. rewrite IHbytes1. decEq. omega
 Qed
 
-theorem storebytes_concat :
+theorem store_bytes_concat :
   ∀ m b ofs bytes1 m1 bytes2 m2,
-  storebytes m b ofs bytes1 = some m1 →
-  storebytes m1 b (ofs + Z_of_nat(length bytes1)) bytes2 = some m2 →
-  storebytes m b ofs (bytes1 ++ bytes2) = some m2
+  store_bytes m b ofs bytes1 = some m1 →
+  store_bytes m1 b (ofs + Z_of_nat(length bytes1)) bytes2 = some m2 →
+  store_bytes m b ofs (bytes1 ++ bytes2) = some m2
 Proof
   intros. generalize H; intro ST1. generalize H0; intro ST2
-  unfold storebytes; unfold storebytes in ST1; unfold storebytes in ST2
+  unfold store_bytes; unfold store_bytes in ST1; unfold store_bytes in ST2
   destruct (range_perm_dec m b ofs (ofs + Z_of_nat(length bytes1)) Cur Writable); try congruence
   destruct (range_perm_dec m1 b (ofs + Z_of_nat(length bytes1)) (ofs + Z_of_nat(length bytes1) + Z_of_nat(length bytes2)) Cur Writable); try congruence
   destruct (range_perm_dec m b ofs (ofs + Z_of_nat (length (bytes1 ++ bytes2))) Cur Writable)
@@ -1474,26 +893,26 @@ Proof
   rewrite app_length. rewrite inj_plus. red; intros
   destruct (zlt ofs0 (ofs + Z_of_nat(length bytes1)))
   apply r. omega
-  eapply perm_storebytes_2; eauto. apply r0. omega
+  eapply perm_store_bytes_2; eauto. apply r0. omega
 Qed
 
-theorem storebytes_split :
+theorem store_bytes_split :
   ∀ m b ofs bytes1 bytes2 m2,
-  storebytes m b ofs (bytes1 ++ bytes2) = some m2 →
+  store_bytes m b ofs (bytes1 ++ bytes2) = some m2 →
   ∃ m1,
-     storebytes m b ofs bytes1 = some m1
-  ∧ storebytes m1 b (ofs + Z_of_nat(length bytes1)) bytes2 = some m2
+     store_bytes m b ofs bytes1 = some m1
+  ∧ store_bytes m1 b (ofs + Z_of_nat(length bytes1)) bytes2 = some m2
 Proof
   intros
-  destruct (range_perm_storebytes m b ofs bytes1) as [m1 ST1]
-  red; intros. exploit storebytes_range_perm; eauto. rewrite app_length
+  destruct (range_perm_store_bytes m b ofs bytes1) as [m1 ST1]
+  red; intros. exploit store_bytes_range_perm; eauto. rewrite app_length
   rewrite inj_plus. omega
-  destruct (range_perm_storebytes m1 b (ofs + Z_of_nat (length bytes1)) bytes2) as [m2' ST2]
-  red; intros. eapply perm_storebytes_1; eauto. exploit storebytes_range_perm
+  destruct (range_perm_store_bytes m1 b (ofs + Z_of_nat (length bytes1)) bytes2) as [m2' ST2]
+  red; intros. eapply perm_store_bytes_1; eauto. exploit store_bytes_range_perm
   eexact H. instantiate (1 := ofs0). rewrite app_length. rewrite inj_plus. omega
   auto
   assert (some m2 = some m2')
-  rewrite <- H. eapply storebytes_concat; eauto
+  rewrite <- H. eapply store_bytes_concat; eauto
   inv H0
   ∃ m1; split; auto
 Qed
@@ -1507,14 +926,14 @@ theorem store_int64_split :
 Proof
   intros
   exploit store_valid_access_3; eauto. intros [A B]. simpl in *
-  exploit store_storebytes. eexact H. intros SB
+  exploit store_store_bytes. eexact H. intros SB
   rewrite encode_val_int64 in SB by auto
-  exploit storebytes_split. eexact SB. intros [m1 [SB1 SB2]]
+  exploit store_bytes_split. eexact SB. intros [m1 [SB1 SB2]]
   rewrite encode_val_length in SB2. simpl in SB2
   ∃ m1; split
-  apply storebytes_store. exact SB1
+  apply store_bytes_store. exact SB1
   simpl. apply Zdivides_trans with 8; auto. ∃ 2; auto
-  apply storebytes_store. exact SB2
+  apply store_bytes_store. exact SB2
   simpl. apply Zdivide_plus_r. apply Zdivides_trans with 8; auto. ∃ 2; auto. ∃ 1; auto
 Qed
 
@@ -1534,6 +953,7 @@ Proof
   exploit store_valid_access_3. eexact H2. intros [P Q]. exact Q
 Qed
 
+#exit
 /- ** Properties related to [alloc]. -/
 
 section ALLOC
@@ -1713,12 +1133,12 @@ Proof
   eapply load_alloc_same; eauto
 Qed
 
-theorem loadbytes_alloc_unchanged :
+theorem load_bytes_alloc_unchanged :
   ∀ b' ofs n,
   valid_block m1 b' →
-  loadbytes m2 b' ofs n = loadbytes m1 b' ofs n
+  load_bytes m2 b' ofs n = load_bytes m1 b' ofs n
 Proof
-  intros. unfold loadbytes
+  intros. unfold load_bytes
   destruct (range_perm_dec m1 b' ofs (ofs + n) Cur Readable)
   rewrite pred_dec_true
   injection ALLOC; intros A B. rewrite <- B; simpl
@@ -1728,12 +1148,12 @@ Proof
   red; intros; elim n0. red; intros. eapply perm_alloc_4; eauto. eauto with mem
 Qed
 
-theorem loadbytes_alloc_same :
+theorem load_bytes_alloc_same :
   ∀ n ofs bytes byte,
-  loadbytes m2 b ofs n = some bytes →
+  load_bytes m2 b ofs n = some bytes →
   In byte bytes → byte = Undef
 Proof
-  unfold loadbytes; intros. destruct (range_perm_dec m2 b ofs (ofs + n) Cur Readable); inv H
+  unfold load_bytes; intros. destruct (range_perm_dec m2 b ofs (ofs + n) Cur Readable); inv H
   revert H0
   injection ALLOC; intros A B. rewrite <- A; rewrite <- B; simpl. rewrite PTree.gss
   generalize (nat_of_Z n) ofs. induction n0; simpl; intros
@@ -1917,12 +1337,12 @@ Proof
   apply valid_access_free_inv_1. eauto with mem
 Qed
 
-theorem loadbytes_free :
+theorem load_bytes_free :
   ∀ b ofs n,
   b ≠ bf ∨ lo >= hi ∨ ofs + n <= lo ∨ hi <= ofs →
-  loadbytes m2 b ofs n = loadbytes m1 b ofs n
+  load_bytes m2 b ofs n = load_bytes m1 b ofs n
 Proof
-  intros. unfold loadbytes
+  intros. unfold load_bytes
   destruct (range_perm_dec m2 b ofs (ofs + n) Cur Readable)
   rewrite pred_dec_true
   rewrite free_result; auto
@@ -1932,11 +1352,11 @@ Proof
   eapply perm_free_1; eauto. destruct H; auto. right; omega
 Qed
 
-theorem loadbytes_free_2 :
+theorem load_bytes_free_2 :
   ∀ b ofs n bytes,
-  loadbytes m2 b ofs n = some bytes → loadbytes m1 b ofs n = some bytes
+  load_bytes m2 b ofs n = some bytes → load_bytes m1 b ofs n = some bytes
 Proof
-  intros. unfold loadbytes in *
+  intros. unfold load_bytes in *
   destruct (range_perm_dec m2 b ofs (ofs + n) Cur Readable); inv H
   rewrite pred_dec_true. rewrite free_result; auto
   red; intros. apply perm_free_3; auto
@@ -2073,13 +1493,13 @@ Proof
   red; intros; elim n. eapply valid_access_drop_2; eauto
 Qed
 
-theorem loadbytes_drop :
+theorem load_bytes_drop :
   ∀ b' ofs n,
   b' ≠ b ∨ ofs + n <= lo ∨ hi <= ofs ∨ perm_order p Readable →
-  loadbytes m' b' ofs n = loadbytes m b' ofs n
+  load_bytes m' b' ofs n = load_bytes m b' ofs n
 Proof
   intros
-  unfold loadbytes
+  unfold load_bytes
   destruct (range_perm_dec m b' ofs (ofs + n) Cur Readable)
   rewrite pred_dec_true
   unfold drop_perm in DROP. destruct (range_perm_dec m b lo hi Cur Freeable); inv DROP. simpl. auto
@@ -2201,15 +1621,15 @@ Proof
   rewrite <- size_chunk_conv. exploit load_valid_access; eauto. intros [A B]. auto
 Qed
 
-lemma loadbytes_inj :
+lemma load_bytes_inj :
   ∀ f m1 m2 len b1 ofs b2 delta bytes1,
   mem_inj f m1 m2 →
-  loadbytes m1 b1 ofs len = some bytes1 →
+  load_bytes m1 b1 ofs len = some bytes1 →
   f b1 = some (b2, delta) →
-  ∃ bytes2, loadbytes m2 b2 (ofs + delta) len = some bytes2
+  ∃ bytes2, load_bytes m2 b2 (ofs + delta) len = some bytes2
               ∧ list_forall2 (memval_inject f) bytes1 bytes2
 Proof
-  intros. unfold loadbytes in *
+  intros. unfold load_bytes in *
   destruct (range_perm_dec m1 b1 ofs (ofs + len) Cur Readable); inv H0
   ∃ (getN (nat_of_Z len) (ofs + delta) (m2.(mem_contents)#b2))
   split. apply pred_dec_true
@@ -2344,15 +1764,15 @@ Proof
   eauto with mem
 Qed
 
-lemma storebytes_mapped_inj :
+lemma store_bytes_mapped_inj :
   ∀ f m1 b1 ofs bytes1 n1 m2 b2 delta bytes2,
   mem_inj f m1 m2 →
-  storebytes m1 b1 ofs bytes1 = some n1 →
+  store_bytes m1 b1 ofs bytes1 = some n1 →
   meminj_no_overlap f m1 →
   f b1 = some (b2, delta) →
   list_forall2 (memval_inject f) bytes1 bytes2 →
   ∃ n2,
-    storebytes m2 b2 (ofs + delta) bytes2 = some n2
+    store_bytes m2 b2 (ofs + delta) bytes2 = some n2
     ∧ mem_inj f n1 n2
 Proof
   intros. inversion H
@@ -2360,24 +1780,24 @@ Proof
     replace (ofs + delta + Z_of_nat (length bytes2))
        with ((ofs + Z_of_nat (length bytes1)) + delta)
     eapply range_perm_inj; eauto with mem
-    eapply storebytes_range_perm; eauto
+    eapply store_bytes_range_perm; eauto
     rewrite (list_forall2_length H3). omega
-  destruct (range_perm_storebytes _ _ _ _ H4) as [n2 STORE]
+  destruct (range_perm_store_bytes _ _ _ _ H4) as [n2 STORE]
   ∃ n2; split. eauto
   constructor
 /- perm -/
   intros
-  eapply perm_storebytes_1; [apply STORE |]
+  eapply perm_store_bytes_1; [apply STORE |]
   eapply mi_perm0; eauto
-  eapply perm_storebytes_2; eauto
+  eapply perm_store_bytes_2; eauto
 /- align -/
   intros. eapply mi_align with (ofs := ofs0) (p := p); eauto
-  red; intros. eapply perm_storebytes_2; eauto
+  red; intros. eapply perm_store_bytes_2; eauto
 /- mem_contents -/
   intros
-  assert (perm m1 b0 ofs0 Cur Readable). eapply perm_storebytes_2; eauto
-  rewrite (storebytes_mem_contents _ _ _ _ _ H0)
-  rewrite (storebytes_mem_contents _ _ _ _ _ STORE)
+  assert (perm m1 b0 ofs0 Cur Readable). eapply perm_store_bytes_2; eauto
+  rewrite (store_bytes_mem_contents _ _ _ _ _ H0)
+  rewrite (store_bytes_mem_contents _ _ _ _ _ STORE)
   rewrite ! PTree.gsspec. destruct (peq b0 b1). subst b0
   /- block = b1, block = b2 -/
   assert (b3 = b2) by congruence. subst b3
@@ -2390,7 +1810,7 @@ Proof
   intros
   assert (b2 ≠ b2 ∨ ofs0 + delta0 ≠ (r - delta) + delta)
     eapply H1; eauto 6 with mem
-    exploit storebytes_range_perm. eexact H0
+    exploit store_bytes_range_perm. eexact H0
     instantiate (1 := r - delta)
     rewrite (list_forall2_length H3). omega
     eauto 6 with mem
@@ -2399,45 +1819,45 @@ Proof
   eauto
 Qed
 
-lemma storebytes_unmapped_inj :
+lemma store_bytes_unmapped_inj :
   ∀ f m1 b1 ofs bytes1 n1 m2,
   mem_inj f m1 m2 →
-  storebytes m1 b1 ofs bytes1 = some n1 →
+  store_bytes m1 b1 ofs bytes1 = some n1 →
   f b1 = none →
   mem_inj f n1 m2
 Proof
   intros. inversion H
   constructor
 /- perm -/
-  intros. eapply mi_perm0; eauto. eapply perm_storebytes_2; eauto
+  intros. eapply mi_perm0; eauto. eapply perm_store_bytes_2; eauto
 /- align -/
   intros. eapply mi_align with (ofs := ofs0) (p := p); eauto
-  red; intros. eapply perm_storebytes_2; eauto
+  red; intros. eapply perm_store_bytes_2; eauto
 /- mem_contents -/
   intros
-  rewrite (storebytes_mem_contents _ _ _ _ _ H0)
-  rewrite PTree.gso. eapply mi_memval0; eauto. eapply perm_storebytes_2; eauto
+  rewrite (store_bytes_mem_contents _ _ _ _ _ H0)
+  rewrite PTree.gso. eapply mi_memval0; eauto. eapply perm_store_bytes_2; eauto
   congruence
 Qed
 
-lemma storebytes_outside_inj :
+lemma store_bytes_outside_inj :
   ∀ f m1 m2 b ofs bytes2 m2',
   mem_inj f m1 m2 →
   (∀ b' delta ofs',
     f b' = some(b, delta) →
     perm m1 b' ofs' Cur Readable →
     ofs <= ofs' + delta < ofs + Z_of_nat (length bytes2) → false) →
-  storebytes m2 b ofs bytes2 = some m2' →
+  store_bytes m2 b ofs bytes2 = some m2' →
   mem_inj f m1 m2'
 Proof
   intros. inversion H. constructor
 /- perm -/
-  intros. eapply perm_storebytes_1; eauto with mem
+  intros. eapply perm_store_bytes_1; eauto with mem
 /- align -/
   eauto
 /- mem_contents -/
   intros
-  rewrite (storebytes_mem_contents _ _ _ _ _ H1)
+  rewrite (store_bytes_mem_contents _ _ _ _ _ H1)
   rewrite PTree.gsspec. destruct (peq b2 b). subst b2
   rewrite setN_outside. auto
   destruct (zlt (ofs0 + delta) ofs); auto
@@ -2446,27 +1866,27 @@ Proof
   eauto with mem
 Qed
 
-lemma storebytes_empty_inj :
+lemma store_bytes_empty_inj :
   ∀ f m1 b1 ofs1 m1' m2 b2 ofs2 m2',
   mem_inj f m1 m2 →
-  storebytes m1 b1 ofs1 nil = some m1' →
-  storebytes m2 b2 ofs2 nil = some m2' →
+  store_bytes m1 b1 ofs1 nil = some m1' →
+  store_bytes m2 b2 ofs2 nil = some m2' →
   mem_inj f m1' m2'
 Proof
   intros. destruct H. constructor
 /- perm -/
   intros
-  eapply perm_storebytes_1; eauto
+  eapply perm_store_bytes_1; eauto
   eapply mi_perm0; eauto
-  eapply perm_storebytes_2; eauto
+  eapply perm_store_bytes_2; eauto
 /- align -/
   intros. eapply mi_align0 with (ofs := ofs) (p := p); eauto
-  red; intros. eapply perm_storebytes_2; eauto
+  red; intros. eapply perm_store_bytes_2; eauto
 /- mem_contents -/
   intros
-  assert (perm m1 b0 ofs Cur Readable). eapply perm_storebytes_2; eauto
-  rewrite (storebytes_mem_contents _ _ _ _ _ H0)
-  rewrite (storebytes_mem_contents _ _ _ _ _ H1)
+  assert (perm m1 b0 ofs Cur Readable). eapply perm_store_bytes_2; eauto
+  rewrite (store_bytes_mem_contents _ _ _ _ _ H0)
+  rewrite (store_bytes_mem_contents _ _ _ _ _ H1)
   simpl. rewrite ! PTree.gsspec
   destruct (peq b0 b1); destruct (peq b3 b2); subst; eapply mi_memval0; eauto
 Qed
@@ -2753,15 +2173,15 @@ Proof
   congruence
 Qed
 
-theorem loadbytes_extends :
+theorem load_bytes_extends :
   ∀ m1 m2 b ofs len bytes1,
   extends m1 m2 →
-  loadbytes m1 b ofs len = some bytes1 →
-  ∃ bytes2, loadbytes m2 b ofs len = some bytes2
+  load_bytes m1 b ofs len = some bytes1 →
+  ∃ bytes2, load_bytes m2 b ofs len = some bytes2
               ∧ list_forall2 memval_lessdef bytes1 bytes2
 Proof
   intros. inv H
-  replace ofs with (ofs + 0) by omega. eapply loadbytes_inj; eauto
+  replace ofs with (ofs + 0) by omega. eapply load_bytes_inj; eauto
 Qed
 
 theorem store_within_extends :
@@ -2817,41 +2237,41 @@ Proof
   congruence
 Qed
 
-theorem storebytes_within_extends :
+theorem store_bytes_within_extends :
   ∀ m1 m2 b ofs bytes1 m1' bytes2,
   extends m1 m2 →
-  storebytes m1 b ofs bytes1 = some m1' →
+  store_bytes m1 b ofs bytes1 = some m1' →
   list_forall2 memval_lessdef bytes1 bytes2 →
   ∃ m2',
-     storebytes m2 b ofs bytes2 = some m2'
+     store_bytes m2 b ofs bytes2 = some m2'
   ∧ extends m1' m2'
 Proof
   intros. inversion H
-  exploit storebytes_mapped_inj; eauto
+  exploit store_bytes_mapped_inj; eauto
     unfold inject_id; red; intros. inv H3; inv H4. auto
     unfold inject_id; reflexivity
   intros [m2' [A B]]
   ∃ m2'; split
   replace (ofs + 0) with ofs in A by omega. auto
   constructor; auto
-  rewrite (nextblock_storebytes _ _ _ _ _ H0)
-  rewrite (nextblock_storebytes _ _ _ _ _ A)
+  rewrite (nextblock_store_bytes _ _ _ _ _ H0)
+  rewrite (nextblock_store_bytes _ _ _ _ _ A)
   auto
-  intros. exploit mext_perm_inv0; intuition eauto using perm_storebytes_1, perm_storebytes_2
+  intros. exploit mext_perm_inv0; intuition eauto using perm_store_bytes_1, perm_store_bytes_2
 Qed
 
-theorem storebytes_outside_extends :
+theorem store_bytes_outside_extends :
   ∀ m1 m2 b ofs bytes2 m2',
   extends m1 m2 →
-  storebytes m2 b ofs bytes2 = some m2' →
+  store_bytes m2 b ofs bytes2 = some m2' →
   (∀ ofs', perm m1 b ofs' Cur Readable → ofs <= ofs' < ofs + Z_of_nat (length bytes2) → false) →
   extends m1 m2'
 Proof
   intros. inversion H. constructor
-  rewrite (nextblock_storebytes _ _ _ _ _ H0). auto
-  eapply storebytes_outside_inj; eauto
+  rewrite (nextblock_store_bytes _ _ _ _ _ H0). auto
+  eapply store_bytes_outside_inj; eauto
   unfold inject_id; intros. inv H2. eapply H1; eauto. omega
-  intros. eauto using perm_storebytes_2. 
+  intros. eauto using perm_store_bytes_2. 
 Qed
 
 theorem alloc_extends :
@@ -3329,15 +2749,15 @@ Proof
   auto. symmetry. eapply address_inject'; eauto with mem
 Qed
 
-theorem loadbytes_inject :
+theorem load_bytes_inject :
   ∀ f m1 m2 b1 ofs len b2 delta bytes1,
   inject f m1 m2 →
-  loadbytes m1 b1 ofs len = some bytes1 →
+  load_bytes m1 b1 ofs len = some bytes1 →
   f b1 = some (b2, delta) →
-  ∃ bytes2, loadbytes m2 b2 (ofs + delta) len = some bytes2
+  ∃ bytes2, load_bytes m2 b2 (ofs + delta) len = some bytes2
               ∧ list_forall2 (memval_inject f) bytes1 bytes2
 Proof
-  intros. inv H. eapply loadbytes_inj; eauto
+  intros. inv H. eapply load_bytes_inj; eauto
 Qed
 
 /- Preservation of stores -/
@@ -3438,107 +2858,107 @@ Proof
   symmetry. eapply address_inject'; eauto with mem
 Qed
 
-theorem storebytes_mapped_inject :
+theorem store_bytes_mapped_inject :
   ∀ f m1 b1 ofs bytes1 n1 m2 b2 delta bytes2,
   inject f m1 m2 →
-  storebytes m1 b1 ofs bytes1 = some n1 →
+  store_bytes m1 b1 ofs bytes1 = some n1 →
   f b1 = some (b2, delta) →
   list_forall2 (memval_inject f) bytes1 bytes2 →
   ∃ n2,
-    storebytes m2 b2 (ofs + delta) bytes2 = some n2
+    store_bytes m2 b2 (ofs + delta) bytes2 = some n2
     ∧ inject f n1 n2
 Proof
   intros. inversion H
-  exploit storebytes_mapped_inj; eauto. intros [n2 [STORE MI]]
+  exploit store_bytes_mapped_inj; eauto. intros [n2 [STORE MI]]
   ∃ n2; split. eauto. constructor
 /- inj -/
   auto
 /- freeblocks -/
-  intros. apply mi_freeblocks0. red; intros; elim H3; eapply storebytes_valid_block_1; eauto
+  intros. apply mi_freeblocks0. red; intros; elim H3; eapply store_bytes_valid_block_1; eauto
 /- mappedblocks -/
-  intros. eapply storebytes_valid_block_1; eauto
+  intros. eapply store_bytes_valid_block_1; eauto
 /- no overlap -/
-  red; intros. eapply mi_no_overlap0; eauto; eapply perm_storebytes_2; eauto
+  red; intros. eapply mi_no_overlap0; eauto; eapply perm_store_bytes_2; eauto
 /- representable -/
   intros. eapply mi_representable0; eauto
-  destruct H4; eauto using perm_storebytes_2
+  destruct H4; eauto using perm_store_bytes_2
 /- perm inv -/
-  intros. exploit mi_perm_inv0; eauto using perm_storebytes_2. 
-  intuition eauto using perm_storebytes_1, perm_storebytes_2
+  intros. exploit mi_perm_inv0; eauto using perm_store_bytes_2. 
+  intuition eauto using perm_store_bytes_1, perm_store_bytes_2
 Qed
 
-theorem storebytes_unmapped_inject :
+theorem store_bytes_unmapped_inject :
   ∀ f m1 b1 ofs bytes1 n1 m2,
   inject f m1 m2 →
-  storebytes m1 b1 ofs bytes1 = some n1 →
+  store_bytes m1 b1 ofs bytes1 = some n1 →
   f b1 = none →
   inject f n1 m2
 Proof
   intros. inversion H
   constructor
 /- inj -/
-  eapply storebytes_unmapped_inj; eauto
+  eapply store_bytes_unmapped_inj; eauto
 /- freeblocks -/
-  intros. apply mi_freeblocks0. red; intros; elim H2; eapply storebytes_valid_block_1; eauto
+  intros. apply mi_freeblocks0. red; intros; elim H2; eapply store_bytes_valid_block_1; eauto
 /- mappedblocks -/
   eauto with mem
 /- no overlap -/
-  red; intros. eapply mi_no_overlap0; eauto; eapply perm_storebytes_2; eauto
+  red; intros. eapply mi_no_overlap0; eauto; eapply perm_store_bytes_2; eauto
 /- representable -/
   intros. eapply mi_representable0; eauto
-  destruct H3; eauto using perm_storebytes_2
+  destruct H3; eauto using perm_store_bytes_2
 /- perm inv -/
   intros. exploit mi_perm_inv0; eauto
-  intuition eauto using perm_storebytes_1, perm_storebytes_2
+  intuition eauto using perm_store_bytes_1, perm_store_bytes_2
 Qed
 
-theorem storebytes_outside_inject :
+theorem store_bytes_outside_inject :
   ∀ f m1 m2 b ofs bytes2 m2',
   inject f m1 m2 →
   (∀ b' delta ofs',
     f b' = some(b, delta) →
     perm m1 b' ofs' Cur Readable →
     ofs <= ofs' + delta < ofs + Z_of_nat (length bytes2) → false) →
-  storebytes m2 b ofs bytes2 = some m2' →
+  store_bytes m2 b ofs bytes2 = some m2' →
   inject f m1 m2'
 Proof
   intros. inversion H. constructor
 /- inj -/
-  eapply storebytes_outside_inj; eauto
+  eapply store_bytes_outside_inj; eauto
 /- freeblocks -/
   auto
 /- mappedblocks -/
-  intros. eapply storebytes_valid_block_1; eauto
+  intros. eapply store_bytes_valid_block_1; eauto
 /- no overlap -/
   auto
 /- representable -/
   auto
 /- perm inv -/
-  intros. eapply mi_perm_inv0; eauto using perm_storebytes_2
+  intros. eapply mi_perm_inv0; eauto using perm_store_bytes_2
 Qed
 
-theorem storebytes_empty_inject :
+theorem store_bytes_empty_inject :
   ∀ f m1 b1 ofs1 m1' m2 b2 ofs2 m2',
   inject f m1 m2 →
-  storebytes m1 b1 ofs1 nil = some m1' →
-  storebytes m2 b2 ofs2 nil = some m2' →
+  store_bytes m1 b1 ofs1 nil = some m1' →
+  store_bytes m2 b2 ofs2 nil = some m2' →
   inject f m1' m2'
 Proof
   intros. inversion H. constructor; intros
 /- inj -/
-  eapply storebytes_empty_inj; eauto
+  eapply store_bytes_empty_inj; eauto
 /- freeblocks -/
-  intros. apply mi_freeblocks0. red; intros; elim H2; eapply storebytes_valid_block_1; eauto
+  intros. apply mi_freeblocks0. red; intros; elim H2; eapply store_bytes_valid_block_1; eauto
 /- mappedblocks -/
-  intros. eapply storebytes_valid_block_1; eauto
+  intros. eapply store_bytes_valid_block_1; eauto
 /- no overlap -/
-  red; intros. eapply mi_no_overlap0; eauto; eapply perm_storebytes_2; eauto
+  red; intros. eapply mi_no_overlap0; eauto; eapply perm_store_bytes_2; eauto
 /- representable -/
   intros. eapply mi_representable0; eauto
-  destruct H3; eauto using perm_storebytes_2
+  destruct H3; eauto using perm_store_bytes_2
 /- perm inv -/
-  intros. exploit mi_perm_inv0; eauto using perm_storebytes_2. 
-  intuition eauto using perm_storebytes_1, perm_storebytes_2
+  intros. exploit mi_perm_inv0; eauto using perm_store_bytes_2. 
+  intuition eauto using perm_store_bytes_1, perm_store_bytes_2
 Qed
 
 /- Preservation of allocations -/
@@ -4196,17 +3616,17 @@ Proof
   eapply perm_unchanged_on; eauto. 
 Qed
 
-lemma loadbytes_unchanged_on_1 :
+lemma load_bytes_unchanged_on_1 :
   ∀ m m' b ofs n,
   unchanged_on m m' →
   valid_block m b →
   (∀ i, ofs <= i < ofs + n → P b i) →
-  loadbytes m' b ofs n = loadbytes m b ofs n
+  load_bytes m' b ofs n = load_bytes m b ofs n
 Proof
   intros
   destruct (zle n 0)
-+ erewrite ! loadbytes_empty by assumption. auto
-+ unfold loadbytes. destruct H
++ erewrite ! load_bytes_empty by assumption. auto
++ unfold load_bytes. destruct H
   destruct (range_perm_dec m b ofs (ofs + n) Cur Readable)
   rewrite pred_dec_true. f_equal
   apply getN_exten. intros. rewrite nat_of_Z_eq in H by omega
@@ -4216,18 +3636,18 @@ Proof
   red; intros; elim n0; red; intros. apply <- unchanged_on_perm0; auto
 Qed
 
-lemma loadbytes_unchanged_on :
+lemma load_bytes_unchanged_on :
   ∀ m m' b ofs n bytes,
   unchanged_on m m' →
   (∀ i, ofs <= i < ofs + n → P b i) →
-  loadbytes m b ofs n = some bytes →
-  loadbytes m' b ofs n = some bytes
+  load_bytes m b ofs n = some bytes →
+  load_bytes m' b ofs n = some bytes
 Proof
   intros
   destruct (zle n 0)
-+ erewrite loadbytes_empty in * by assumption. auto
-+ rewrite <- H1. apply loadbytes_unchanged_on_1; auto
-  exploit loadbytes_range_perm; eauto. instantiate (1 := ofs). omega
++ erewrite load_bytes_empty in * by assumption. auto
++ rewrite <- H1. apply load_bytes_unchanged_on_1; auto
+  exploit load_bytes_range_perm; eauto. instantiate (1 := ofs). omega
   intros. eauto with mem
 Qed
 
@@ -4273,16 +3693,16 @@ Proof
   elim (H0 ofs0). omega. auto
 Qed
 
-lemma storebytes_unchanged_on :
+lemma store_bytes_unchanged_on :
   ∀ m b ofs bytes m',
-  storebytes m b ofs bytes = some m' →
+  store_bytes m b ofs bytes = some m' →
   (∀ i, ofs <= i < ofs + Z_of_nat (length bytes) → ~ P b i) →
   unchanged_on m m'
 Proof
   intros; constructor; intros
-- rewrite (nextblock_storebytes _ _ _ _ _ H). apply Ple_refl
-- split; intros. eapply perm_storebytes_1; eauto. eapply perm_storebytes_2; eauto
-- erewrite storebytes_mem_contents; eauto. rewrite PTree.gsspec
+- rewrite (nextblock_store_bytes _ _ _ _ _ H). apply Ple_refl
+- split; intros. eapply perm_store_bytes_1; eauto. eapply perm_store_bytes_2; eauto
+- erewrite store_bytes_mem_contents; eauto. rewrite PTree.gsspec
   destruct (peq b0 b); auto. subst b0. apply setN_outside
   destruct (zlt ofs0 ofs); auto
   destruct (zlt ofs0 (ofs + Z_of_nat (length bytes))); auto
@@ -4358,6 +3778,6 @@ end Mem
 
 Notation mem := Mem.mem
 
-Global Opaque Mem.alloc Mem.free Mem.store Mem.load Mem.storebytes Mem.loadbytes
+Global Opaque Mem.alloc Mem.free Mem.store Mem.load Mem.store_bytes Mem.load_bytes
 
 end memory

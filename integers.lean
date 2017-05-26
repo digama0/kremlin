@@ -6,6 +6,7 @@ open word
 /- * Specialization to integers of size 8, 32, and 64 bits -/
 
 def W8 : ℕ+ := ⟨8, dec_trivial⟩
+def W16 : ℕ+ := ⟨16, dec_trivial⟩
 def W32 : ℕ+ := ⟨32, dec_trivial⟩
 def W64 : ℕ+ := ⟨64, dec_trivial⟩
 def ptrofs.wordsize : ℕ+ := if archi.ptr64 then W64 else W32

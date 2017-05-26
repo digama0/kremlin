@@ -21,11 +21,12 @@ open t
 
 def empty (A : Type) := (leaf : t A).
 
-def get {A : Type} : pos_num → t A → option A
-| i                 leaf         := none
-| pos_num.one       (node l o r) := o
-| (pos_num.bit0 i') (node l o r) := get i' l
-| (pos_num.bit1 i') (node l o r) := get i' r
+def get {A : Type} : pos_num → t A → option A :=
+by { intros i m, revert i,
+     induction m with l o r Il Ir; intro i, exact none,
+     cases i with i' i',
+     exact o,
+     exact Il i', exact Ir i' }
 
 def set {A : Type} : pos_num → A → t A → t A
 | pos_num.one       v leaf         := node leaf (some v) leaf

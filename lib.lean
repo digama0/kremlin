@@ -12,6 +12,8 @@ end
 
 theorem to_bool_true {p : Prop} [decidable p] : p → to_bool p := (to_bool_iff p).2
 
+theorem to_bool_tt {p : Prop} [decidable p] : p → to_bool p = tt := to_bool_true
+
 theorem of_to_bool_true {p : Prop} [decidable p] : to_bool p → p := (to_bool_iff p).1
 
 theorem bool_iff_false {b : bool} : ¬ b ↔ b = ff := by cases b; exact dec_trivial
@@ -52,6 +54,7 @@ def num.bit1 : num → num
 instance : has_coe pos_num num := ⟨num.pos⟩
 
 instance pos_num.decidable_eq : decidable_eq pos_num := by tactic.mk_dec_eq_instance
+instance num.decidable_eq : decidable_eq num := by tactic.mk_dec_eq_instance
 
 def pos_num.lor : pos_num → pos_num → pos_num
 | 1                (pos_num.bit0 q) := pos_num.bit1 q
@@ -158,6 +161,12 @@ def num.shiftr : num → nat → num
 | 0           n := 0
 | (num.pos p) n := pos_num.shiftr p n
 
+def num.succ' : num → pos_num
+| 0           := 1
+| (num.pos p) := pos_num.succ p
+
+theorem num.succ'_eq_succ (n : num) : n.succ = num.pos n.succ' := by cases n; refl
+
 def num.of_nat : nat → num
 | 0 := 0
 | (nat.succ n) := num.succ (num.of_nat n)
@@ -244,7 +253,7 @@ theorem num.of_nat_add (m) : Π (n : ℕ), num.of_nat (m + n) = num.of_nat m + n
 | (n+1) := show num.succ (num.of_nat (m + n)) = num.of_nat m + num.succ (num.of_nat n),
            by rw [num.add_succ, num.of_nat_add]
 
-theorem num_of_nat_of_pos_num : Π (n : pos_num), num.of_nat (nat.of_pos_num n) = num.pos n
+@[simp] theorem num_of_nat_of_pos_num : Π (n : pos_num), num.of_nat (nat.of_pos_num n) = num.pos n
 | 1                := rfl
 | (pos_num.bit0 p) :=
   show num.of_nat (nat.of_pos_num p + nat.of_pos_num p) = num.pos (pos_num.bit0 p),
@@ -273,6 +282,11 @@ function.injective_of_left_inverse nat_of_num_of_nat
 theorem nat.of_num_inj_coe : ∀ {m n : num}, (m : ℕ) = n → m = n :=
 function.injective_of_left_inverse num_of_nat_of_num
 
+theorem nat.of_pos_num_inj {m n} (h : nat.of_pos_num m = nat.of_pos_num n) : m = n :=
+by note := congr_arg num.of_nat h; simp at this; injection this; assumption
+
+theorem nat.of_pos_num_inj_coe {m n : pos_num} : (m : ℕ) = n → m = n := nat.of_pos_num_inj
+
 theorem nat.of_pos_num_pos : ∀ n : pos_num, (n : ℕ) > 0
 | 1                := dec_trivial
 | (pos_num.bit0 p) := let h := nat.of_pos_num_pos p in add_pos h h
@@ -298,7 +312,7 @@ theorem nat.of_num_pred : ∀ (n : num), (num.pred n : ℕ) = nat.pred n
 | (pos_num.bit0 p) := nat.of_pos_num_pred (pos_num.bit0 p)
 | (pos_num.bit1 p) := rfl
 
-theorem nat.of_pos_num_lt : ∀ (m n : pos_num), to_bool ((m : ℕ) < n) = pos_num.lt m n
+theorem nat.of_pos_num_lt' : ∀ (m n : pos_num), to_bool ((m : ℕ) < n) = pos_num.lt m n
 | 1                1                := rfl
 | 1                (pos_num.bit0 q) :=
   let h : (1:ℕ) ≤ q := nat.of_pos_num_pos q in to_bool_true (add_le_add h h)
@@ -308,33 +322,90 @@ theorem nat.of_pos_num_lt : ∀ (m n : pos_num), to_bool ((m : ℕ) < n) = pos_n
   have (p + p : ℕ) < q + q ↔ (p:ℕ) < q, from
   ⟨λh, lt_of_not_ge $ λhn, not_le_of_gt h $ add_le_add hn hn,
    λh, add_lt_add h h⟩,
-  eq.trans (to_bool_congr this) (nat.of_pos_num_lt p q)
+  eq.trans (to_bool_congr this) (nat.of_pos_num_lt' p q)
 | (pos_num.bit0 p) (pos_num.bit1 q) := show _ = pos_num.lt p (pos_num.succ q), from
   have (p + p : ℕ) < q + q + 1 ↔ (p:ℕ) < q + 1, by rw add_assoc; exact
   ⟨λh, lt_of_not_ge $ λhn, not_le_of_gt h $ add_le_add (nat.le_of_lt hn) hn,
    λh, add_lt_add_of_le_of_lt (nat.le_of_lt_succ h) h⟩,
-  eq.trans (to_bool_congr (by rw nat.of_pos_num_succ_coe; exact this)) (nat.of_pos_num_lt p (pos_num.succ q))
+  eq.trans (to_bool_congr (by rw nat.of_pos_num_succ_coe; exact this)) (nat.of_pos_num_lt' p (pos_num.succ q))
 | (pos_num.bit1 p) 1                := rfl
 | (pos_num.bit1 p) (pos_num.bit0 q) :=
   have (p + p + 1 : ℕ) < q + q ↔ (p:ℕ) < q, by rw add_assoc; exact
   ⟨λh, lt_of_not_ge $ λhn, not_le_of_gt h $ add_le_add hn (nat.le_succ_of_le hn),
    λh, add_lt_add_of_lt_of_le h h⟩,
-  eq.trans (to_bool_congr this) (nat.of_pos_num_lt p q)
+  eq.trans (to_bool_congr this) (nat.of_pos_num_lt' p q)
 | (pos_num.bit1 p) (pos_num.bit1 q) :=
   have (p + p + 1 : ℕ) < q + q + 1 ↔ (p:ℕ) < q, from
   ⟨λh, lt_of_not_ge $ λhn, not_le_of_gt h $ nat.succ_le_succ (add_le_add hn hn),
    λh, nat.succ_lt_succ (add_lt_add h h)⟩,
-  eq.trans (to_bool_congr this) (nat.of_pos_num_lt p q)
+  eq.trans (to_bool_congr this) (nat.of_pos_num_lt' p q)
 
-theorem nat.of_pos_num_lt' (m n : pos_num) : pos_num.lt m n ↔ (m : ℕ) < n :=
-by rw -nat.of_pos_num_lt; apply to_bool_iff
+instance : has_lt pos_num := ⟨λ m n, pos_num.lt m n⟩
+instance : has_le pos_num := ⟨λ m n, pos_num.le m n⟩
 
-theorem nat.of_pos_num_le (m n : pos_num) : to_bool ((m : ℕ) ≤ n) = pos_num.le m n :=
-by delta pos_num.le; rw [-nat.of_pos_num_lt, nat.of_pos_num_succ_coe]; exact
+theorem nat.of_pos_num_lt {m n : pos_num} : m < n ↔ (m : ℕ) < n :=
+show pos_num.lt m n ↔ _, by rw -nat.of_pos_num_lt'; apply to_bool_iff
+
+theorem nat.of_pos_num_le' (m n : pos_num) : to_bool ((m : ℕ) ≤ n) = pos_num.le m n :=
+by delta pos_num.le; rw [-nat.of_pos_num_lt', nat.of_pos_num_succ_coe]; exact
 to_bool_congr ⟨nat.lt_succ_of_le, nat.le_of_lt_succ⟩
 
-theorem nat.of_pos_num_le' (m n : pos_num) : pos_num.le m n ↔ (m : ℕ) ≤ n :=
-by rw -nat.of_pos_num_le; apply to_bool_iff
+theorem nat.of_pos_num_le {m n : pos_num} : m ≤ n ↔ (m : ℕ) ≤ n :=
+show pos_num.le m n ↔ _, by rw -nat.of_pos_num_le'; apply to_bool_iff
+
+theorem nat.of_num_lt' : ∀ (m n : num), to_bool ((m : ℕ) < n) = num.lt m n
+| 0           0           := rfl
+| 0           (num.pos q) := to_bool_true (nat.of_pos_num_pos q)
+| (num.pos p) 0           := rfl
+| (num.pos p) (num.pos q) := nat.of_pos_num_lt' p q
+
+instance : has_lt num := ⟨λ m n, num.lt m n⟩
+instance : has_le num := ⟨λ m n, num.le m n⟩
+
+theorem nat.of_num_lt {m n : num} : m < n ↔ (m : ℕ) < n :=
+show num.lt m n ↔ _, by rw -nat.of_num_lt'; apply to_bool_iff
+
+theorem nat.of_num_le' : ∀ (m n : num), to_bool ((m : ℕ) ≤ n) = num.le m n
+| 0           0           := rfl
+| 0           (num.pos q) := rfl
+| (num.pos p) 0           := to_bool_ff $ not_le_of_gt (nat.of_pos_num_pos p)
+| (num.pos p) (num.pos q) := nat.of_pos_num_le' p q
+
+theorem nat.of_num_le {m n : num} : m ≤ n ↔ (m : ℕ) ≤ n :=
+show num.le m n ↔ _, by rw -nat.of_num_le'; apply to_bool_iff
+
+-- TODO(Mario): Prove these using transfer tactic
+instance : decidable_linear_order pos_num :=
+{ lt                         := (<),
+  le                         := (≤),
+  le_refl                    := λa, nat.of_pos_num_le.2 (le_refl _),
+  le_trans                   := λa b c h1 h2, nat.of_pos_num_le.2 $
+                                le_trans (nat.of_pos_num_le.1 h1) (nat.of_pos_num_le.1 h2),
+  le_antisymm                := λa b h1 h2, nat.of_pos_num_inj_coe $ 
+                                le_antisymm (nat.of_pos_num_le.1 h1) (nat.of_pos_num_le.1 h2),
+  le_total                   := λa b, (le_total (a:ℕ) b).imp nat.of_pos_num_le.2 nat.of_pos_num_le.2,
+  le_iff_lt_or_eq            := λa b, nat.of_pos_num_le.trans $ le_iff_lt_or_eq.trans $
+                                or_congr nat.of_pos_num_lt.symm ⟨nat.of_pos_num_inj_coe, congr_arg _⟩,
+  lt_irrefl                  := λ a h1, lt_irrefl (a:ℕ) $ nat.of_pos_num_lt.1 h1,
+  decidable_lt               := by apply_instance,
+  decidable_le               := by apply_instance,
+  decidable_eq               := by apply_instance }
+
+instance : decidable_linear_order num :=
+{ lt                         := (<),
+  le                         := (≤),
+  le_refl                    := λa, nat.of_num_le.2 (le_refl _),
+  le_trans                   := λa b c h1 h2, nat.of_num_le.2 $
+                                le_trans (nat.of_num_le.1 h1) (nat.of_num_le.1 h2),
+  le_antisymm                := λa b h1 h2, nat.of_num_inj_coe $ 
+                                le_antisymm (nat.of_num_le.1 h1) (nat.of_num_le.1 h2),
+  le_total                   := λa b, (le_total (a:ℕ) b).imp nat.of_num_le.2 nat.of_num_le.2,
+  le_iff_lt_or_eq            := λa b, nat.of_num_le.trans $ le_iff_lt_or_eq.trans $
+                                or_congr nat.of_num_lt.symm ⟨nat.of_num_inj_coe, congr_arg _⟩,
+  lt_irrefl                  := λ a h1, lt_irrefl (a:ℕ) $ nat.of_num_lt.1 h1,
+  decidable_lt               := by apply_instance,
+  decidable_le               := by apply_instance,
+  decidable_eq               := by apply_instance }
 
 def nat.lor    (m n : ℕ) : ℕ := num.lor m n
 def nat.land   (m n : ℕ) : ℕ := num.land m n
