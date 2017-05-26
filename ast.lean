@@ -177,7 +177,7 @@ by delta Mptr; cases archi.ptr64; refl
   have stronger alignment requirements.  The following definition is
   appropriate for PowerPC, ARM and x86. -/
 
-def memory_chunk.align : memory_chunk → ℤ
+def memory_chunk.align : memory_chunk → ℕ
 | Mint8signed    := 1
 | Mint8unsigned  := 1
 | Mint16signed   := 2

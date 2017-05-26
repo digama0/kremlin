@@ -1,4 +1,4 @@
-import data.hash_map
+import data.hash_map .lib
 
 namespace maps
 
@@ -35,8 +35,26 @@ def set {A : Type} : pos_num → A → t A → t A
 | (pos_num.bit0 i') v (node l o r) := node (set i' v l) o r
 | (pos_num.bit1 i') v (node l o r) := node l o (set i' v r)
 
-theorem gempty {A} (i) : get i (empty A) = none :=
-by induction i; simp [empty, get]
+lemma gleaf {A} (i) : get i (leaf : t A) = none :=
+by induction i; simp [get]
+
+theorem gempty {A} (i) : get i (empty A) = none := gleaf i
+
+theorem gss {A} (i x) (m : t A) : get i (set i x m) = some x := sorry
+
+theorem gso {A i j} (x : A) (m : t A) : i ≠ j → get i (set j x m) = get i m := sorry
+
+theorem gsspec {A} (i j) (x : A) (m : t A) :
+  get i (set j x m) = if i = j then some x else get i m :=
+by { by_cases (i = j); simp [h], rw gss, rw gso _ _ h }
+
+theorem gsident :
+  ∀ (A : Type) (i : pos_num) (m : t A) (v : A),
+  get i m = some v → set i v m = m := sorry
+
+theorem set2 :
+  ∀ (A : Type) (i : elt) (m : t A) (v1 v2 : A),
+  set i v2 (set i v1 m) = set i v2 m := sorry
 
 def of_list {A} (l: list (elt × A)) : t A :=
 l.foldl (λ m ⟨k, v⟩, set k v m) (empty _)

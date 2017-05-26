@@ -249,10 +249,10 @@ theorem max_signed_unsigned : max_signed < max_unsigned := sorry
 @[simp] lemma unsigned_repr_eq (x) : unsigned (repr x) = x.nat_mod modulus := sorry
 
 lemma signed_repr_eq (x) : signed (repr x) =
-  if x % modulus < half_modulus then x % modulus else x % modulus - modulus := sorry
+  if x.nat_mod modulus < half_modulus then x.nat_mod modulus else x.nat_mod modulus - modulus := sorry
 
-lemma mod_eq_of_repr_eq {x y} (h : repr x = repr y) : x % modulus = y % modulus :=
-let t := congr_arg (λx, (unsigned x : ℤ)) h in
+lemma mod_eq_of_repr_eq {x y} (h : repr x = repr y) : x.nat_mod modulus = y.nat_mod modulus :=
+let t := congr_arg unsigned h in
 by simp at t; simp [t]
 
 theorem unsigned_range (i) : unsigned i < modulus := sorry

@@ -4,6 +4,43 @@ meta def exact_dec_trivial : tactic unit := `[exact dec_trivial]
 
 instance : has_coe ℕ+ ℕ := ⟨λn, n.1⟩
 
+theorem to_bool_iff (p : Prop) [d : decidable p] : to_bool p ↔ p :=
+match d with
+| is_true hp := ⟨λh, hp, λ_, rfl⟩
+| is_false hnp := ⟨λh, bool.no_confusion h, λhp, absurd hp hnp⟩
+end
+
+theorem to_bool_true {p : Prop} [decidable p] : p → to_bool p := (to_bool_iff p).2
+
+theorem of_to_bool_true {p : Prop} [decidable p] : to_bool p → p := (to_bool_iff p).1
+
+theorem bool_iff_false {b : bool} : ¬ b ↔ b = ff := by cases b; exact dec_trivial
+
+theorem bool_eq_false {b : bool} : ¬ b → b = ff := bool_iff_false.1
+
+theorem to_bool_ff_iff (p : Prop) [decidable p] : to_bool p = ff ↔ ¬p :=
+bool_iff_false.symm.trans (not_congr (to_bool_iff _))
+
+theorem to_bool_ff {p : Prop} [decidable p] : ¬p → to_bool p = ff := (to_bool_ff_iff p).2
+
+theorem of_to_bool_ff {p : Prop} [decidable p] : to_bool p = ff → ¬p := (to_bool_ff_iff p).1
+
+theorem to_bool_congr {p q : Prop} [decidable p] [decidable q] (h : p ↔ q) : to_bool p = to_bool q :=
+begin
+  ginduction to_bool q with h',
+  exact to_bool_ff (mt h.1 $ of_to_bool_ff h'),
+  exact to_bool_true (h.2 $ of_to_bool_true h') 
+end
+
+theorem bor_iff (a b : bool) : a || b ↔ a ∨ b :=
+by cases a; cases b; exact dec_trivial
+
+theorem band_iff (a b : bool) : a && b ↔ a ∧ b :=
+by cases a; cases b; exact dec_trivial
+
+theorem bxor_iff (a b : bool) : bxor a b ↔ xor a b :=
+by cases a; cases b; exact dec_trivial
+
 def num.bit0 : num → num
 | 0 := 0
 | (num.pos n) := num.pos (pos_num.bit0 n)
@@ -131,14 +168,182 @@ instance num_nat_coe : has_coe num nat := ⟨nat.of_num⟩
 
 instance nat_num_coe : has_coe nat num := ⟨num.of_nat⟩
 
-def nat.lor    (m n : ℕ) : ℕ := num.lor m n 
-def nat.land   (m n : ℕ) : ℕ := num.land m n 
-def nat.ldiff  (m n : ℕ) : ℕ := num.ldiff m n 
-def nat.lxor   (m n : ℕ) : ℕ := num.lxor m n 
-def nat.shiftl (m n : ℕ) : ℕ := num.shiftl m n 
-def nat.shiftr (m n : ℕ) : ℕ := num.shiftr m n 
+theorem nat.of_pos_num_succ : ∀ n, nat.of_pos_num (pos_num.succ n) = nat.succ (nat.of_pos_num n)
+| 1                := rfl
+| (pos_num.bit0 p) := by simph [pos_num.succ, nat.of_pos_num]
+| (pos_num.bit1 p) := by simph [pos_num.succ, nat.of_pos_num];
+  change nat.of_pos_num p + 1 + nat.of_pos_num p + 1 =
+         nat.of_pos_num p + nat.of_pos_num p + 1 + 1; simp
 
-def nat.test_bit (m n : ℕ) : bool := num.test_bit m n 
+theorem nat.of_pos_num_succ_coe : ∀ n, (pos_num.succ n : ℕ) = n + 1 := nat.of_pos_num_succ
+
+theorem pos_num.add_one (n : pos_num) : n + 1 = pos_num.succ n := by cases n; refl
+theorem pos_num.one_add (n : pos_num) : 1 + n = pos_num.succ n := by cases n; refl
+
+theorem nat.of_pos_num_add : ∀ m n : pos_num, nat.of_pos_num (pos_num.add m n) = nat.of_pos_num m + nat.of_pos_num n
+| 1                b                :=
+  by rw [show pos_num.add 1 b = _, from pos_num.one_add b, nat.of_pos_num_succ, add_comm]; refl
+| a                1                :=
+  by rw [show pos_num.add a 1 = _, from pos_num.add_one a, nat.of_pos_num_succ]; refl
+| (pos_num.bit0 a) (pos_num.bit0 b) :=
+  by simp [pos_num.add, nat.of_pos_num, nat.of_pos_num_add];
+  change (_ + _) + (_ + _) = (_ + _) + (_ + _); simp
+| (pos_num.bit0 a) (pos_num.bit1 b) :=
+  by simp [pos_num.add, nat.of_pos_num, nat.of_pos_num_add, nat.of_pos_num_succ];
+  change (_ + _) + (_ + _) + 1 = (_ + _) + (_ + _ + 1); simp
+| (pos_num.bit1 a) (pos_num.bit0 b) :=
+  by simp [pos_num.add, nat.of_pos_num, nat.of_pos_num_add, nat.of_pos_num_succ];
+  change (_ + _) + (_ + _) + 1 = (_ + _) + (_ + _ + 1); simp
+| (pos_num.bit1 a) (pos_num.bit1 b) :=
+  by simp [pos_num.add, nat.of_pos_num, nat.of_pos_num_add, nat.of_pos_num_succ];
+  change (_ + _ + 1) + (_ + _ + 1) = (_ + _ + 1) + (_ + _ + 1); simp
+
+theorem pos_num.add_succ : ∀ (m n : pos_num), m + pos_num.succ n = pos_num.succ (m + n)
+| 1                b                := by simp [pos_num.one_add]
+| (pos_num.bit0 a) 1                := congr_arg pos_num.bit0 (pos_num.add_one a)
+| (pos_num.bit1 a) 1                := congr_arg pos_num.bit1 (pos_num.add_one a)
+| (pos_num.bit0 a) (pos_num.bit0 b) := rfl
+| (pos_num.bit0 a) (pos_num.bit1 b) := congr_arg pos_num.bit0 (pos_num.add_succ a b)
+| (pos_num.bit1 a) (pos_num.bit0 b) := rfl
+| (pos_num.bit1 a) (pos_num.bit1 b) := congr_arg pos_num.bit1 (pos_num.add_succ a b)
+
+theorem nat.of_num_add : Π m n, nat.of_num (m + n) = nat.of_num m + nat.of_num n
+| 0           0           := rfl
+| 0           (num.pos q) := (zero_add _).symm
+| (num.pos p) 0           := rfl
+| (num.pos p) (num.pos q) := nat.of_pos_num_add _ _
+
+theorem num.add_zero (n : num) : n + 0 = n := by cases n; refl
+theorem num.zero_add (n : num) : 0 + n = n := by cases n; refl
+
+theorem num.add_succ : ∀ (m n : num), m + num.succ n = num.succ (m + n)
+| 0           n           := by simp [num.zero_add]
+| (num.pos p) 0           := show num.pos (p + 1) = num.succ (num.pos p + 0),
+                             by rw [pos_num.add_one, num.add_zero]; refl
+| (num.pos p) (num.pos q) := congr_arg num.pos (pos_num.add_succ _ _)
+
+theorem nat.of_num_succ : Π (n : num), nat.of_num (num.succ n) = nat.succ (nat.of_num n)
+| 0           := rfl
+| (num.pos p) := by simp [num.succ, nat.of_num, nat.of_pos_num_succ]
+
+@[simp] theorem nat_of_num_of_nat : Π (n : ℕ), nat.of_num (num.of_nat n) = n
+| 0     := rfl
+| (n+1) := (nat.of_num_succ (num.of_nat n)).trans (congr_arg nat.succ (nat_of_num_of_nat n))
+
+theorem pos_num.bit0_of_bit0 : Π (n : pos_num), bit0 n = pos_num.bit0 n
+| 1                := rfl
+| (pos_num.bit0 p) := congr_arg pos_num.bit0 (pos_num.bit0_of_bit0 p)
+| (pos_num.bit1 p) := show pos_num.bit0 (pos_num.succ (bit0 p)) = _,
+                      by rw pos_num.bit0_of_bit0; refl
+
+theorem pos_num.bit1_of_bit1 (n : pos_num) : bit1 n = pos_num.bit1 n :=
+show bit0 n + 1 = pos_num.bit1 n, by rw [pos_num.add_one, pos_num.bit0_of_bit0]; refl
+
+theorem num.of_nat_add (m) : Π (n : ℕ), num.of_nat (m + n) = num.of_nat m + num.of_nat n
+| 0     := (num.add_zero _).symm
+| (n+1) := show num.succ (num.of_nat (m + n)) = num.of_nat m + num.succ (num.of_nat n),
+           by rw [num.add_succ, num.of_nat_add]
+
+theorem num_of_nat_of_pos_num : Π (n : pos_num), num.of_nat (nat.of_pos_num n) = num.pos n
+| 1                := rfl
+| (pos_num.bit0 p) :=
+  show num.of_nat (nat.of_pos_num p + nat.of_pos_num p) = num.pos (pos_num.bit0 p),
+  by rw [num.of_nat_add, num_of_nat_of_pos_num]; exact congr_arg num.pos p.bit0_of_bit0
+| (pos_num.bit1 p) :=
+  show num.succ (num.of_nat (nat.of_pos_num p + nat.of_pos_num p)) = num.pos (pos_num.bit1 p),
+  by rw [num.of_nat_add, num_of_nat_of_pos_num]; exact congr_arg (num.pos ∘ pos_num.succ) p.bit0_of_bit0
+
+@[simp] theorem num_of_nat_of_num : Π (n : num), num.of_nat (nat.of_num n) = n
+| 0           := rfl
+| (num.pos p) := num_of_nat_of_pos_num p
+
+@[simp] theorem num_of_nat_of_num_coe : Π (n : num), ((n : ℕ) : num) = n := num_of_nat_of_num
+
+@[simp] theorem nat_of_num_of_nat_coe : Π (n : ℕ), ((n : num) : ℕ) = n := nat_of_num_of_nat
+
+theorem num.of_nat_inj : ∀ {m n}, num.of_nat m = num.of_nat n → m = n :=
+function.injective_of_left_inverse nat_of_num_of_nat
+
+theorem nat.of_num_inj : ∀ {m n}, nat.of_num m = nat.of_num n → m = n :=
+function.injective_of_left_inverse num_of_nat_of_num
+
+theorem num.of_nat_inj_coe : ∀ {m n : ℕ}, (m : num) = n → m = n :=
+function.injective_of_left_inverse nat_of_num_of_nat
+
+theorem nat.of_num_inj_coe : ∀ {m n : num}, (m : ℕ) = n → m = n :=
+function.injective_of_left_inverse num_of_nat_of_num
+
+theorem nat.of_pos_num_pos : ∀ n : pos_num, (n : ℕ) > 0
+| 1                := dec_trivial
+| (pos_num.bit0 p) := let h := nat.of_pos_num_pos p in add_pos h h
+| (pos_num.bit1 p) := nat.succ_pos _
+
+theorem nat.of_pos_num_pred : ∀ n, (pos_num.pred n : ℕ) = cond (pos_num.is_one n) 1 (nat.pred n)
+| 1                := rfl
+| 2                := rfl
+| (pos_num.bit1 q) := rfl
+| (pos_num.bit0 q) := have IH : _, from nat.of_pos_num_pred q,
+  begin cases q with p p, refl,
+    pose q := pos_num.bit1 p, tactic.swap, pose q := pos_num.bit0 p, all_goals {
+      change (pos_num.pred q + pos_num.pred q + 1 : ℕ) = nat.pred (q + q),
+      rw IH, exact
+      calc  nat.succ (nat.pred q + nat.pred q)
+          = nat.pred (nat.succ (nat.pred q) + nat.succ (nat.pred q)) : by rw nat.succ_add; refl
+      ... = nat.pred (q + q) : by rw nat.succ_pred_eq_of_pos (nat.of_pos_num_pos q) }
+  end
+
+theorem nat.of_num_pred : ∀ (n : num), (num.pred n : ℕ) = nat.pred n
+| 0                := rfl
+| 1                := rfl
+| (pos_num.bit0 p) := nat.of_pos_num_pred (pos_num.bit0 p)
+| (pos_num.bit1 p) := rfl
+
+theorem nat.of_pos_num_lt : ∀ (m n : pos_num), to_bool ((m : ℕ) < n) = pos_num.lt m n
+| 1                1                := rfl
+| 1                (pos_num.bit0 q) :=
+  let h : (1:ℕ) ≤ q := nat.of_pos_num_pos q in to_bool_true (add_le_add h h)
+| 1                (pos_num.bit1 q) := to_bool_true $ nat.succ_lt_succ $ nat.of_pos_num_pos $ pos_num.bit0 q
+| (pos_num.bit0 p) 1                := to_bool_ff $ not_lt_of_ge $ nat.of_pos_num_pos $ pos_num.bit0 p
+| (pos_num.bit0 p) (pos_num.bit0 q) :=
+  have (p + p : ℕ) < q + q ↔ (p:ℕ) < q, from
+  ⟨λh, lt_of_not_ge $ λhn, not_le_of_gt h $ add_le_add hn hn,
+   λh, add_lt_add h h⟩,
+  eq.trans (to_bool_congr this) (nat.of_pos_num_lt p q)
+| (pos_num.bit0 p) (pos_num.bit1 q) := show _ = pos_num.lt p (pos_num.succ q), from
+  have (p + p : ℕ) < q + q + 1 ↔ (p:ℕ) < q + 1, by rw add_assoc; exact
+  ⟨λh, lt_of_not_ge $ λhn, not_le_of_gt h $ add_le_add (nat.le_of_lt hn) hn,
+   λh, add_lt_add_of_le_of_lt (nat.le_of_lt_succ h) h⟩,
+  eq.trans (to_bool_congr (by rw nat.of_pos_num_succ_coe; exact this)) (nat.of_pos_num_lt p (pos_num.succ q))
+| (pos_num.bit1 p) 1                := rfl
+| (pos_num.bit1 p) (pos_num.bit0 q) :=
+  have (p + p + 1 : ℕ) < q + q ↔ (p:ℕ) < q, by rw add_assoc; exact
+  ⟨λh, lt_of_not_ge $ λhn, not_le_of_gt h $ add_le_add hn (nat.le_succ_of_le hn),
+   λh, add_lt_add_of_lt_of_le h h⟩,
+  eq.trans (to_bool_congr this) (nat.of_pos_num_lt p q)
+| (pos_num.bit1 p) (pos_num.bit1 q) :=
+  have (p + p + 1 : ℕ) < q + q + 1 ↔ (p:ℕ) < q, from
+  ⟨λh, lt_of_not_ge $ λhn, not_le_of_gt h $ nat.succ_le_succ (add_le_add hn hn),
+   λh, nat.succ_lt_succ (add_lt_add h h)⟩,
+  eq.trans (to_bool_congr this) (nat.of_pos_num_lt p q)
+
+theorem nat.of_pos_num_lt' (m n : pos_num) : pos_num.lt m n ↔ (m : ℕ) < n :=
+by rw -nat.of_pos_num_lt; apply to_bool_iff
+
+theorem nat.of_pos_num_le (m n : pos_num) : to_bool ((m : ℕ) ≤ n) = pos_num.le m n :=
+by delta pos_num.le; rw [-nat.of_pos_num_lt, nat.of_pos_num_succ_coe]; exact
+to_bool_congr ⟨nat.lt_succ_of_le, nat.le_of_lt_succ⟩
+
+theorem nat.of_pos_num_le' (m n : pos_num) : pos_num.le m n ↔ (m : ℕ) ≤ n :=
+by rw -nat.of_pos_num_le; apply to_bool_iff
+
+def nat.lor    (m n : ℕ) : ℕ := num.lor m n
+def nat.land   (m n : ℕ) : ℕ := num.land m n
+def nat.ldiff  (m n : ℕ) : ℕ := num.ldiff m n
+def nat.lxor   (m n : ℕ) : ℕ := num.lxor m n
+def nat.shiftl (m n : ℕ) : ℕ := num.shiftl m n
+def nat.shiftr (m n : ℕ) : ℕ := num.shiftr m n
+
+def nat.test_bit (m n : ℕ) : bool := num.test_bit m n
 
 def nat.size (n : ℕ) : ℕ := num.size' n
 
