@@ -92,6 +92,22 @@ def int.mod : ℤ → ℤ → ℤ
 instance : has_div ℤ := ⟨int.div⟩
 instance : has_mod ℤ := ⟨int.mod⟩
 
+def int.all_nat (p : ℕ → Prop) : ℤ → Prop
+| (n : ℕ) := p n
+| -[1+ n] := true
+
+def int.ex_nat (p : ℕ → Prop) : ℤ → Prop
+| (n : ℕ) := p n
+| -[1+ n] := false
+
+def int.exists_of_ex_nat {p : ℕ → Prop} : ∀ (x : ℤ), x.ex_nat p → ∃ n, ↑n = x ∧ p n
+| (n : ℕ) h := ⟨n, rfl, h⟩
+| -[1+ n] h := false.elim h
+
+def int.all_nat_of_forall {p : ℕ → Prop} : ∀ (x : ℤ), (∀ n, ↑n = x → p n) → x.all_nat p
+| (n : ℕ) h := h n rfl
+| -[1+ n] h := trivial
+
 lemma int.shiftr_div_two_p (x) (n : ℕ) : int.shiftr x n = x / 2^n := sorry
 
 lemma int.testbit_mod_two_p (n x i) : int.test_bit (x % 2^n) i =
@@ -161,3 +177,5 @@ def swap_comparison : comparison → comparison
 | Cle := Cge
 | Cgt := Clt
 | Cge := Cle
+
+
