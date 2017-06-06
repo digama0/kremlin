@@ -47,7 +47,7 @@ inductive perm_order : permission → permission → Prop
 export perm_order
 
 lemma perm_order_trans {p1 p2 p3}
-  (p12 : perm_order p1 p2) (p23 : perm_order p2 p3) : perm_order p1 p3 := sorry
+  (p12 : perm_order p1 p2) (p23 : perm_order p2 p3) : perm_order p1 p3 := sorry'
 
 instance : decidable_rel perm_order :=
 λ p1 p2, by cases p1; cases p2; {right, constructor} <|> {left, intro h, cases h}
@@ -85,8 +85,8 @@ theorem perm_order''.refl (op) : perm_order'' op op :=
 by { cases op, trivial, apply perm_refl }
 
 structure mem : Type :=
-(mem_contents : PTree.t (PTree.t memval))  /- [block → offset → memval] -/
-(mem_access : PTree.t (ℕ → perm_kind → option permission))
+(mem_contents : PTree (PTree memval))  /- [block → offset → memval] -/
+(mem_access : PTree (ℕ → perm_kind → option permission))
                                          /- [block → offset → kind → option permission] -/
 (nextblock : block)
 (access_max : ∀ (b : block) (ofs : ℕ), let m := (mem_access#b).get_or_else (λ_ _, none) in
@@ -108,8 +108,8 @@ mt $ λ bb, by rw bb at h1; assumption
 def mem.access (m : mem) (b : block) : ℕ → perm_kind → option permission :=
 (m.mem_access#b).get_or_else (λ_ _, none)
 
-def mem.get_block (m : mem) (b : block) : PTree.t memval :=
-(m.mem_contents#b).get_or_else (PTree.empty _)
+def mem.get_block (m : mem) (b : block) : PTree memval :=
+(m.mem_contents#b).get_or_else ∅
 
 def mem.contents (m : mem) (b : block) (ofs : ℕ) : memval :=
 (m.get_block b # num.succ' ofs).get_or_else Undef
@@ -123,13 +123,13 @@ theorem perm_implies {m b ofs k p1 p2} :
   perm_order p1 p2 → perm m b ofs k p1 → perm m b ofs k p2 :=
 by { delta perm, cases m.access b ofs k, apply λ_, id, apply λa b, perm_order_trans b a }
 
-theorem perm_cur_max {m b ofs p} : perm m b ofs Cur p → perm m b ofs Max p := sorry
+theorem perm_cur_max {m b ofs p} : perm m b ofs Cur p → perm m b ofs Max p := sorry'
 
-theorem perm_cur {m b ofs k p} : perm m b ofs Cur p → perm m b ofs k p := sorry
+theorem perm_cur {m b ofs k p} : perm m b ofs Cur p → perm m b ofs k p := sorry'
 
-theorem perm_max {m b ofs k p} : perm m b ofs k p → perm m b ofs Max p := sorry
+theorem perm_max {m b ofs k p} : perm m b ofs k p → perm m b ofs Max p := sorry'
 
-theorem perm_valid_block {m b ofs k p} : perm m b ofs k p → valid_block m b := sorry
+theorem perm_valid_block {m b ofs k p} : perm m b ofs k p → valid_block m b := sorry'
 
 instance perm_dec (m b ofs k p) : decidable (perm m b ofs k p) :=
 by delta perm; apply_instance
@@ -183,7 +183,7 @@ by delta perm at p; rw t at p; exact p
 
 lemma valid_access_compat {m} {chunk1 chunk2 : memory_chunk} {b ofs p} :
   chunk1.size = chunk2.size → chunk2.align ≤ chunk1.align →
-  valid_access m chunk1 b ofs p → valid_access m chunk2 b ofs p := sorry
+  valid_access m chunk1 b ofs p → valid_access m chunk2 b ofs p := sorry'
 
 instance valid_access_dec (m chunk b ofs p) : decidable (valid_access m chunk b ofs p) :=
 by delta valid_access; apply_instance
@@ -227,8 +227,8 @@ weak_valid_pointer_spec.2 $ or.inl v
 /- The initial store -/
 
 protected def empty : mem :=
-{ mem_contents       := PTree.empty _,
-  mem_access         := PTree.empty _,
+{ mem_contents       := ∅,
+  mem_access         := ∅,
   nextblock          := 1,
   access_max         := λ b ofs, by rw PTree.gempty; trivial,
   nextblock_noaccess := λ b ofs k h, by rw PTree.gempty; trivial }
@@ -240,7 +240,7 @@ instance : has_emptyc mem := ⟨memory.empty⟩
   infinite memory. -/
 
 def mem.alloc (m : mem) (lo hi : ℕ) : mem :=
-{ mem_contents := PTree.set m.nextblock (PTree.empty _) m.mem_contents,
+{ mem_contents := PTree.set m.nextblock ∅ m.mem_contents,
   mem_access := PTree.set m.nextblock
     (λ ofs k, if lo ≤ ofs ∧ ofs < hi then some Freeable else none) m.mem_access,
   nextblock := m.nextblock.succ,
@@ -297,11 +297,11 @@ def free_list : mem → list (block × ℕ × ℕ) → option mem
 
 /- Reading N adjacent bytes in a block content. -/
 
-def get1 : ℤ → PTree.t memval → memval
+def get1 : ℤ → PTree memval → memval
 | (p : ℕ) c := (PTree.get (num.succ' p) c).get_or_else Undef
 | _ c := Undef
 
-def getN : ℕ → ℤ → PTree.t memval → list memval
+def getN : ℕ → ℤ → PTree memval → list memval
 | 0       p c := []
 | (n + 1) p c := get1 p c :: getN n (p+1) c
 
@@ -332,15 +332,15 @@ if range_perm m b ofs (ofs + n) Cur Readable then some $ getN n ofs (m.get_block
 
 /- Writing N adjacent bytes in a block content. -/
 
-def setN' : list memval → pos_num → PTree.t memval → PTree.t memval
+def setN' : list memval → pos_num → PTree memval → PTree memval
 | []         p c := c
 | (v :: vl') p c := setN' vl' p.succ (PTree.set p v c)
 
-def setN (vl : list memval) (ofs : ℕ) : PTree.t memval → PTree.t memval :=
+def setN (vl : list memval) (ofs : ℕ) : PTree memval → PTree memval :=
 setN' vl (num.succ' ofs)
 
 theorem setN_other {vl c p q} : (∀ r, p ≤ r → r < p + list.length vl → r ≠ q) →
-  get1 q (setN vl p c) = get1 q c := sorry
+  get1 q (setN vl p c) = get1 q c := sorry'
 
 theorem setN_outside {vl c p q} : q < p ∨ q ≥ p + list.length vl →
   get1 q (setN vl p c) = get1 q c :=
@@ -352,16 +352,16 @@ by { intro h,
      { exact not_le_of_gt a h1 },
      { exact not_le_of_gt h2 a } }
 
-theorem getN_setN_same {vl p c} : getN (list.length vl) ↑p (setN vl p c) = vl := sorry
+theorem getN_setN_same {vl p c} : getN (list.length vl) ↑p (setN vl p c) = vl := sorry'
 
 theorem getN.ext {c1 c2 n p} :
   (∀ i, p ≤ i → i < p + ↑n → get1 i c1 = get1 i c2) →
-  getN n p c1 = getN n p c2 := sorry
+  getN n p c1 = getN n p c2 := sorry'
 
 def interval_disjoint (x dx y dy : ℕ) := ∀ r, x ≤ r → r < x + dx → y ≤ r → r < y + dy → false
 
 theorem getN_setN_disjoint {vl q c n p} :
-  interval_disjoint p n q (list.length vl) → getN n p (setN vl q c) = getN n p c := sorry
+  interval_disjoint p n q (list.length vl) → getN n p (setN vl q c) = getN n p c := sorry'
 
 theorem getN_setN_outside {vl q c n p} :
   p + n ≤ q ∨ q + list.length vl ≤ p → getN n p (setN vl q c) = getN n p c :=
@@ -372,9 +372,9 @@ by { intro h,
      { exact not_le_of_gt hdx (le_trans a hy) },
      { exact not_le_of_gt hdy (le_trans a hx) } }
 
-lemma setN_in {vl p q c} : p ≤ q → q < p + list.length vl → get1 q (setN vl p c) ∈ vl := sorry
+lemma setN_in {vl p q c} : p ≤ q → q < p + list.length vl → get1 q (setN vl p c) ∈ vl := sorry'
 
-lemma getN_in {c q n p} : p ≤ q → q < p + ↑n → get1 q c ∈ getN n p c := sorry
+lemma getN_in {c q n p} : p ≤ q → q < p + ↑n → get1 q c ∈ getN n p c := sorry'
 
 /- [store_bytes m b ofs bytes] stores the given list of bytes [bytes]
   starting at location [(b, ofs)].  Returns updated memory state
@@ -478,10 +478,10 @@ theorem load_cast {m chunk b ofs v} (h : load chunk m b ofs = some v) : decode_v
 by rw load_result h; apply decode_val_cast
 
 theorem load_int8_signed_unsigned {m b ofs} :
-  load Mint8signed m b ofs = sign_ext W8 <$> load Mint8unsigned m b ofs := sorry
+  load Mint8signed m b ofs = sign_ext W8 <$> load Mint8unsigned m b ofs := sorry'
 
 theorem load_int16_signed_unsigned {m b ofs} :
-  load Mint16signed m b ofs = sign_ext W16 <$> load Mint16unsigned m b ofs := sorry
+  load Mint16signed m b ofs = sign_ext W16 <$> load Mint16unsigned m b ofs := sorry'
 
 /- ** Properties related to [load_bytes] -/
 
@@ -526,39 +526,39 @@ by rw [-load_bytes_getN h, getN_length]
 theorem load_bytes_empty {m b ofs} : load_bytes m b ofs 0 = some [] :=
 by {delta load_bytes, rw if_pos, refl, intros r h1 h2, exact absurd h1 (not_le_of_gt h2)}
 
-lemma getN_concat {c n1 n2 p} : getN (n1 + n2) p c = getN n1 p c ++ getN n2 (p + n1) c := sorry
+lemma getN_concat {c n1 n2 p} : getN (n1 + n2) p c = getN n1 p c ++ getN n2 (p + n1) c := sorry'
 
 theorem load_bytes_concat {m b ofs n1 n2 bytes1 bytes2} :
   load_bytes m b ofs n1 = some bytes1 →
   load_bytes m b (ofs + n1) n2 = some bytes2 →
-  load_bytes m b ofs (n1 + n2) = some (bytes1 ++ bytes2) := sorry
+  load_bytes m b ofs (n1 + n2) = some (bytes1 ++ bytes2) := sorry'
 
 theorem load_bytes_split {m b ofs n1 n2 bytes} :
   load_bytes m b ofs (n1 + n2) = some bytes →
   ∃ bytes1, ∃ bytes2,
      load_bytes m b ofs n1 = some bytes1
   ∧ load_bytes m b (ofs + n1) n2 = some bytes2
-  ∧ bytes = bytes1 ++ bytes2 := sorry
+  ∧ bytes = bytes1 ++ bytes2 := sorry'
 
 theorem load_rep {ch : memory_chunk} {m1 m2 : mem} {b ofs v1 v2} :
   (∀ z < ch.size, get1 (ofs + z : ℕ) (m1.get_block b) = get1 (ofs + z) (m2.get_block b)) →
-  load ch m1 b ofs = some v1 → load ch m2 b ofs = some v2 → v1 = v2 := sorry
+  load ch m1 b ofs = some v1 → load ch m2 b ofs = some v2 → v1 = v2 := sorry'
 
 theorem load_int64_split {m b ofs v} :
   load Mint64 m b ofs = some v → ¬ archi.ptr64 →
   ∃ v1 v2,
      load Mint32 m b ofs = some (if archi.big_endian then v1 else v2)
   ∧ load Mint32 m b (ofs + 4) = some (if archi.big_endian then v2 else v1)
-  ∧ lessdef v (long_of_words v1 v2) := sorry
+  ∧ lessdef v (long_of_words v1 v2) := sorry'
 
 lemma addressing_int64_split {i : ptrofs} : ¬ archi.ptr64 → 8 ∣ unsigned i →
-  unsigned (i + ptrofs.of_int (repr 4)) = unsigned i + 4 := sorry
+  unsigned (i + ptrofs.of_int (repr 4)) = unsigned i + 4 := sorry'
 
 theorem loadv_int64_split {m a v} : loadv Mint64 m a = some v → ¬ archi.ptr64 →
   ∃ v1 v2,
      loadv Mint32 m a = some (if archi.big_endian then v1 else v2)
   ∧ loadv Mint32 m (a + Vint (repr 4)) = some (if archi.big_endian then v2 else v1)
-  ∧ lessdef v (long_of_words v1 v2) := sorry
+  ∧ lessdef v (long_of_words v1 v2) := sorry'
 
 /- ** Properties related to [store_bytes]. -/
 
@@ -569,11 +569,11 @@ theorem range_perm_store_bytes {m1 b ofs bytes}
 
 theorem store_bytes_store {m1 b ofs chunk v m2} :
   store_bytes m1 b ofs (encode_val chunk v) = some m2 →
-  chunk.align ∣ ofs → store chunk m1 b ofs v = some m2 := sorry
+  chunk.align ∣ ofs → store chunk m1 b ofs v = some m2 := sorry'
 
 theorem store_store_bytes {m1 b ofs chunk v m2} :
   store chunk m1 b ofs v = some m2 →
-  store_bytes m1 b ofs (encode_val chunk v) = some m2 := sorry
+  store_bytes m1 b ofs (encode_val chunk v) = some m2 := sorry'
 
 section store_bytes
 parameters {m1 m2 : mem} {b : block} {ofs : ℕ} {bytes : list memval}
@@ -624,14 +624,14 @@ by { unfold load_bytes mem.get_block,
 
 theorem load_bytes_store_bytes_disjoint {b' ofs' len} :
   b' ≠ b ∨ interval_disjoint ofs' len ofs bytes.length →
-  load_bytes m2 b' ofs' len = load_bytes m1 b' ofs' len := sorry
+  load_bytes m2 b' ofs' len = load_bytes m1 b' ofs' len := sorry'
 
 theorem load_bytes_store_bytes_other {b' ofs' len} :
   b' ≠ b ∨ ofs' + len ≤ ofs ∨ ofs + bytes.length ≤ ofs' →
-  load_bytes m2 b' ofs' len = load_bytes m1 b' ofs' len := sorry
+  load_bytes m2 b' ofs' len = load_bytes m1 b' ofs' len := sorry'
 theorem load_store_bytes_other {chunk : memory_chunk} {b' ofs'} :
   b' ≠ b ∨ ofs' + chunk.size ≤ ofs ∨ ofs + bytes.length ≤ ofs' →
-  load chunk m2 b' ofs' = load chunk m1 b' ofs' := sorry
+  load chunk m2 b' ofs' = load chunk m1 b' ofs' := sorry'
 
 end store_bytes
 
@@ -686,7 +686,7 @@ store_bytes_valid_access store_bytes_of_store
 
 theorem load_store_similar {chunk' : memory_chunk} :
   chunk'.size = chunk.size → chunk'.align ≤ chunk.align →
-  ∃ v', load chunk' m2 b ofs = some v' ∧ decode_encode_val v chunk chunk' v' := sorry
+  ∃ v', load chunk' m2 b ofs = some v' ∧ decode_encode_val v chunk chunk' v' := sorry'
 
 theorem load_store_similar_2 {chunk' : memory_chunk} :
   chunk'.size = chunk.size → chunk'.align ≤ chunk.align → chunk'.type = chunk.type →
@@ -720,7 +720,7 @@ lemma load_store_overlap {chunk m1 b ofs v m2 chunk' ofs' v'} :
   ∧ shape_decoding chunk' (mv1' :: mvl') v'
   ∧ ((ofs' = ofs ∧ mv1' = mv1)
     ∨ (ofs' > ofs ∧ mv1' ∈ mvl)
-    ∨ (ofs' < ofs ∧ mv1 ∈ mvl')) := sorry
+    ∨ (ofs' < ofs ∧ mv1 ∈ mvl')) := sorry'
 
 def compat_pointer_chunks : memory_chunk → memory_chunk → bool
 | Mint32 Mint32 := tt
@@ -743,64 +743,64 @@ theorem load_pointer_store {chunk m1 b ofs v m2 chunk' b' ofs' vb vo} :
   store chunk m1 b ofs v = some m2 →
   load chunk' m2 b' ofs' = some (Vptr vb vo) →
   (v = Vptr vb vo ∧ compat_pointer_chunks chunk chunk' ∧ b' = b ∧ ofs' = ofs)
-  ∨ (b' ≠ b ∨ ofs' + chunk'.size ≤ ofs ∨ ofs + chunk.size ≤ ofs') := sorry
+  ∨ (b' ≠ b ∨ ofs' + chunk'.size ≤ ofs ∨ ofs + chunk.size ≤ ofs') := sorry'
 
 theorem load_store_pointer_overlap {chunk m1 b ofs vb vo m2 chunk' ofs' v} :
   store chunk m1 b ofs (Vptr vb vo) = some m2 → load chunk' m2 b ofs' = some v →
-  ofs' ≠ ofs → ofs' + chunk'.size > ofs → ofs + chunk.size > ofs' → v = Vundef := sorry
+  ofs' ≠ ofs → ofs' + chunk'.size > ofs → ofs + chunk.size > ofs' → v = Vundef := sorry'
 
 theorem load_store_pointer_mismatch {chunk m1 b ofs vb vo m2 chunk' v} :
   store chunk m1 b ofs (Vptr vb vo) = some m2 → load chunk' m2 b ofs = some v →
-  ¬ compat_pointer_chunks chunk chunk' → v = Vundef := sorry
+  ¬ compat_pointer_chunks chunk chunk' → v = Vundef := sorry'
 
 lemma store_similar_chunks {chunk1 chunk2 v1 v2 m b ofs} :
   encode_val chunk1 v1 = encode_val chunk2 v2 → chunk1.align = chunk2.align →
-  store chunk1 m b ofs v1 = store chunk2 m b ofs v2 := sorry
+  store chunk1 m b ofs v1 = store chunk2 m b ofs v2 := sorry'
 
 theorem store_signed_unsigned_8 {m b ofs v} :
-  store Mint8signed m b ofs v = store Mint8unsigned m b ofs v := sorry
+  store Mint8signed m b ofs v = store Mint8unsigned m b ofs v := sorry'
 
 theorem store_signed_unsigned_16 {m b ofs v} :
-  store Mint16signed m b ofs v = store Mint16unsigned m b ofs v := sorry
+  store Mint16signed m b ofs v = store Mint16unsigned m b ofs v := sorry'
 
 theorem store_int8_zero_ext {m b ofs n} :
   store Mint8unsigned m b ofs (Vint (zero_ext 8 n)) =
-  store Mint8unsigned m b ofs (Vint n) := sorry
+  store Mint8unsigned m b ofs (Vint n) := sorry'
 
 theorem store_int8_sign_ext {m b ofs n} :
   store Mint8signed m b ofs (Vint (sign_ext W8 n)) =
-  store Mint8signed m b ofs (Vint n) := sorry
+  store Mint8signed m b ofs (Vint n) := sorry'
 
 theorem store_int16_zero_ext {m b ofs n} :
   store Mint16unsigned m b ofs (Vint (zero_ext 16 n)) =
-  store Mint16unsigned m b ofs (Vint n) := sorry
+  store Mint16unsigned m b ofs (Vint n) := sorry'
 
 theorem store_int16_sign_ext {m b ofs n} :
   store Mint16signed m b ofs (Vint (sign_ext W16 n)) =
-  store Mint16signed m b ofs (Vint n) := sorry
+  store Mint16signed m b ofs (Vint n) := sorry'
 
 lemma setN_concat {bytes1 bytes2 ofs c} :
-  setN (bytes1 ++ bytes2) ofs c = setN bytes2 (ofs + bytes1.length) (setN bytes1 ofs c) := sorry
+  setN (bytes1 ++ bytes2) ofs c = setN bytes2 (ofs + bytes1.length) (setN bytes1 ofs c) := sorry'
 
 theorem store_bytes_concat {m b ofs bytes1 m1 bytes2 m2} :
   store_bytes m b ofs bytes1 = some m1 →
   store_bytes m1 b (ofs + bytes1.length) bytes2 = some m2 →
-  store_bytes m b ofs (bytes1 ++ bytes2) = some m2 := sorry
+  store_bytes m b ofs (bytes1 ++ bytes2) = some m2 := sorry'
 
 theorem store_bytes_split {m b ofs bytes1 bytes2 m2} :
   store_bytes m b ofs (bytes1 ++ bytes2) = some m2 →
   ∃ m1, store_bytes m b ofs bytes1 = some m1
-      ∧ store_bytes m1 b (ofs + bytes1.length) bytes2 = some m2 := sorry
+      ∧ store_bytes m1 b (ofs + bytes1.length) bytes2 = some m2 := sorry'
 
 theorem store_int64_split {m b ofs v m'} :
   store Mint64 m b ofs v = some m' → ¬ archi.ptr64 →
   ∃ m1, store Mint32 m b ofs (if archi.big_endian then hiword v else loword v) = some m1
-  ∧ store Mint32 m1 b (ofs + 4) (if archi.big_endian then loword v else hiword v) = some m' := sorry
+  ∧ store Mint32 m1 b (ofs + 4) (if archi.big_endian then loword v else hiword v) = some m' := sorry'
 
 theorem storev_int64_split {m a v m'} :
   storev Mint64 m a v = some m' → archi.ptr64 = ff →
   ∃ m1, storev Mint32 m a (if archi.big_endian then hiword v else loword v) = some m1
-  ∧ storev Mint32 m1 (a + Vint (repr 4)) (if archi.big_endian then loword v else hiword v) = some m' := sorry
+  ∧ storev Mint32 m1 (a + Vint (repr 4)) (if archi.big_endian then loword v else hiword v) = some m' := sorry'
 
 /- ** Properties related to [alloc]. -/
 
@@ -835,10 +835,10 @@ begin
   { exact id }
 end
 
-theorem perm_alloc_2 {ofs k} : lo ≤ ofs → ofs < hi → perm m2 b ofs k Freeable := sorry
+theorem perm_alloc_2 {ofs k} : lo ≤ ofs → ofs < hi → perm m2 b ofs k Freeable := sorry'
 
 theorem perm_alloc_inv {b' ofs k p} : perm m2 b' ofs k p →
-  if b' = b then lo ≤ ofs ∧ ofs < hi else perm m1 b' ofs k p := sorry
+  if b' = b then lo ≤ ofs ∧ ofs < hi else perm m1 b' ofs k p := sorry'
 
 theorem perm_alloc_3 {ofs k p} (h : perm m2 b ofs k p) : lo ≤ ofs ∧ ofs < hi :=
 by note := perm_alloc_inv h; simp at this; exact this
@@ -860,28 +860,28 @@ theorem valid_access_alloc_same {chunk : memory_chunk} {ofs}
 theorem valid_access_alloc_inv {chunk b' ofs p} (h : valid_access m2 chunk b' ofs p) :
   if b' = b
   then lo ≤ ofs ∧ ofs + chunk.size ≤ hi ∧ chunk.align ∣ ofs
-  else valid_access m1 chunk b' ofs p := sorry
+  else valid_access m1 chunk b' ofs p := sorry'
 
 theorem load_alloc_unchanged (chunk b' ofs) (h : valid_block m1 b') :
-  load chunk m2 b' ofs = load chunk m1 b' ofs := sorry
+  load chunk m2 b' ofs = load chunk m1 b' ofs := sorry'
 
 theorem load_alloc_other {chunk b' ofs v}
   (h : load chunk m1 b' ofs = some v) : load chunk m2 b' ofs = some v :=
-by rwa -load_alloc_unchanged at h; exact sorry
+by rwa -load_alloc_unchanged at h; exact sorry'
 
 theorem load_alloc_same {chunk ofs v} :
-  load chunk m2 b ofs = some v → v = Vundef := sorry
+  load chunk m2 b ofs = some v → v = Vundef := sorry'
 
 theorem load_alloc_same' {chunk : memory_chunk} {ofs} :
   lo ≤ ofs → ofs + chunk.size ≤ hi → chunk.align ∣ ofs →
-  load chunk m2 b ofs = some Vundef := sorry
+  load chunk m2 b ofs = some Vundef := sorry'
 
 theorem load_bytes_alloc_unchanged {b' ofs n} :
-  valid_block m1 b' → load_bytes m2 b' ofs n = load_bytes m1 b' ofs n := sorry
+  valid_block m1 b' → load_bytes m2 b' ofs n = load_bytes m1 b' ofs n := sorry'
 
 theorem load_bytes_alloc_same {n ofs bytes byte} :
   load_bytes m2 b ofs n = some bytes →
-  byte ∈ bytes → byte = Undef := sorry
+  byte ∈ bytes → byte = Undef := sorry'
 
 end alloc
 
@@ -911,23 +911,23 @@ by rw free_result FREE; refl
 
 theorem perm_free_1 {b ofs k p} :
   b ≠ bf ∨ ofs < lo ∨ hi ≤ ofs →
-  perm m1 b ofs k p → perm m2 b ofs k p := sorry
+  perm m1 b ofs k p → perm m2 b ofs k p := sorry'
 
-theorem perm_free_2 {ofs k p} : lo ≤ ofs → ofs < hi → ¬ perm m2 bf ofs k p := sorry
+theorem perm_free_2 {ofs k p} : lo ≤ ofs → ofs < hi → ¬ perm m2 bf ofs k p := sorry'
 
-theorem perm_free_3 {b ofs k p} : perm m2 b ofs k p → perm m1 b ofs k p := sorry
+theorem perm_free_3 {b ofs k p} : perm m2 b ofs k p → perm m1 b ofs k p := sorry'
 
 theorem perm_free_inv {b ofs k p} :
-  perm m1 b ofs k p → (b = bf ∧ lo ≤ ofs ∧ ofs < hi) ∨ perm m2 b ofs k p := sorry
+  perm m1 b ofs k p → (b = bf ∧ lo ≤ ofs ∧ ofs < hi) ∨ perm m2 b ofs k p := sorry'
 
 theorem valid_access_free_1 {chunk b ofs p} :
   valid_access m1 chunk b ofs p →
   b ≠ bf ∨ lo ≥ hi ∨ ofs + chunk.size ≤ lo ∨ hi ≤ ofs →
-  valid_access m2 chunk b ofs p := sorry
+  valid_access m2 chunk b ofs p := sorry'
 
 theorem valid_access_free_2 {chunk : memory_chunk} {ofs p} :
   lo < hi → ofs + chunk.size > lo → ofs < hi →
-  ¬ valid_access m2 chunk bf ofs p := sorry
+  ¬ valid_access m2 chunk bf ofs p := sorry'
 
 theorem valid_access_free_inv_1 {chunk b ofs p} :
   valid_access m2 chunk b ofs p → valid_access m1 chunk b ofs p :=
@@ -935,21 +935,21 @@ and_implies (λal ofs' h1 h2, perm_free_3 $ al h1 h2) id
 
 theorem valid_access_free_inv_2 {chunk ofs p} :
   valid_access m2 chunk bf ofs p →
-  lo ≥ hi ∨ ofs + chunk.size ≤ lo ∨ hi ≤ ofs := sorry
+  lo ≥ hi ∨ ofs + chunk.size ≤ lo ∨ hi ≤ ofs := sorry'
 
 theorem load_free {chunk :memory_chunk} {b ofs} :
   b ≠ bf ∨ lo ≥ hi ∨ ofs + chunk.size ≤ lo ∨ hi ≤ ofs →
-  load chunk m2 b ofs = load chunk m1 b ofs := sorry
+  load chunk m2 b ofs = load chunk m1 b ofs := sorry'
 
 theorem load_free_2 {chunk b ofs v} :
-  load chunk m2 b ofs = some v → load chunk m1 b ofs = some v := sorry
+  load chunk m2 b ofs = some v → load chunk m1 b ofs = some v := sorry'
 
 theorem load_bytes_free {b ofs n} :
   b ≠ bf ∨ lo ≥ hi ∨ ofs + n ≤ lo ∨ hi ≤ ofs →
-  load_bytes m2 b ofs n = load_bytes m1 b ofs n := sorry
+  load_bytes m2 b ofs n = load_bytes m1 b ofs n := sorry'
 
 theorem load_bytes_free_2 {b ofs n bytes} :
-  load_bytes m2 b ofs n = some bytes → load_bytes m1 b ofs n = some bytes := sorry
+  load_bytes m2 b ofs n = some bytes → load_bytes m1 b ofs n = some bytes := sorry'
 
 end free
 
@@ -999,9 +999,9 @@ theorem perm_drop_1 {ofs k} (hl : lo ≤ ofs) (hh : ofs < hi) : perm m' b ofs k 
 (perm_drop_2 hl hh).2 (perm_order.perm_refl _)
 
 theorem perm_drop_3 {b' ofs k p'} : b' ≠ b ∨ ofs < lo ∨ hi ≤ ofs →
-  perm m b' ofs k p' → perm m' b' ofs k p' := sorry
+  perm m b' ofs k p' → perm m' b' ofs k p' := sorry'
 
-theorem perm_drop_4 {b' ofs k p'} : perm m' b' ofs k p' → perm m b' ofs k p' := sorry
+theorem perm_drop_4 {b' ofs k p'} : perm m' b' ofs k p' → perm m b' ofs k p' := sorry'
 
 lemma range_perm_drop_3 {b' lo' hi' k p'}
   (h : b' ≠ b ∨ hi' ≤ lo ∨ hi ≤ lo' ∨ perm_order p p') :
@@ -1100,13 +1100,13 @@ lemma range_perm_inj {f m1 m2 b1 lo hi k p b2 delta} :
   mem_inj f m1 m2 →
   range_perm_Z m1 b1 lo hi k p →
   f b1 = some (b2, delta) →
-  range_perm_Z m2 b2 (lo + delta) (hi + delta) k p := sorry
+  range_perm_Z m2 b2 (lo + delta) (hi + delta) k p := sorry'
 
 lemma valid_access_inj {f m1 m2 b1 b2 delta chunk ofs p} :
   mem_inj f m1 m2 →
   f b1 = some (b2, delta) →
   valid_access_Z m1 chunk b1 ofs p →
-  valid_access_Z m2 chunk b2 (ofs + delta) p := sorry
+  valid_access_Z m2 chunk b2 (ofs + delta) p := sorry'
 
 /- Preservation of loads. -/
 
@@ -1118,14 +1118,14 @@ lemma getN_inj {f m1 m2 b1 b2 delta} :
   (↑ofs + delta).ex_nat (λ ofs',
   list.forall2 (memval_inject f)
                (getN n ofs (m1.get_block b1))
-               (getN n ofs' (m2.get_block b2))) := sorry
+               (getN n ofs' (m2.get_block b2))) := sorry'
 
 lemma load_inj {f m1 m2 chunk b1 ofs b2 delta v1} :
   mem_inj f m1 m2 →
   load chunk m1 b1 ofs = some v1 →
   f b1 = some (b2, delta) →
   (↑ofs + delta).ex_nat (λ ofs',
-  ∃ v2, load chunk m2 b2 ofs' = some v2 ∧ inject f v1 v2) := sorry
+  ∃ v2, load chunk m2 b2 ofs' = some v2 ∧ inject f v1 v2) := sorry'
 
 lemma load_bytes_inj {f m1 m2 len b1 ofs b2 delta bytes1} :
   mem_inj f m1 m2 →
@@ -1133,7 +1133,7 @@ lemma load_bytes_inj {f m1 m2 len b1 ofs b2 delta bytes1} :
   f b1 = some (b2, delta) →
   (↑ofs + delta).ex_nat (λ ofs',
   ∃ bytes2, load_bytes m2 b2 ofs' len = some bytes2
-              ∧ list.forall2 (memval_inject f) bytes1 bytes2) := sorry
+              ∧ list.forall2 (memval_inject f) bytes1 bytes2) := sorry'
 
 /- Preservation of stores. -/
 
@@ -1143,7 +1143,7 @@ lemma setN_inj (access : ℤ → Prop) {delta f vl1 vl2} :
   (∀ q, access q → memval_inject f (get1 q c1) (get1 (q + delta) c2)) →
   (∀ q, access q → (↑p + delta).all_nat (λp',
      memval_inject f (get1 q (setN vl1 p c1))
-                     (get1 (q + delta) (setN vl2 p' c2)))) := sorry
+                     (get1 (q + delta) (setN vl2 p' c2)))) := sorry'
 
 def meminj_no_overlap (f : meminj) (m : mem) : Prop :=
   ∀ b1 b1' delta1 b2 b2' delta2 ofs1 ofs2,
@@ -1163,13 +1163,13 @@ lemma store_mapped_inj {f chunk m1 b1 ofs v1 n1 m2 b2 delta v2} :
   (↑ofs + delta).ex_nat (λ ofs',
   ∃ n2,
     store chunk m2 b2 ofs' v2 = some n2
-    ∧ mem_inj f n1 n2) := sorry
+    ∧ mem_inj f n1 n2) := sorry'
 
 lemma store_unmapped_inj {f chunk m1 b1 ofs v1 n1 m2} :
   mem_inj f m1 m2 →
   store chunk m1 b1 ofs v1 = some n1 →
   f b1 = none →
-  mem_inj f n1 m2 := sorry
+  mem_inj f n1 m2 := sorry'
 
 lemma store_outside_inj {f m1 m2 chunk b ofs v m2'} :
   mem_inj f m1 m2 →
@@ -1178,7 +1178,7 @@ lemma store_outside_inj {f m1 m2 chunk b ofs v m2'} :
     perm m1 b' ofs' Cur Readable →
     ↑ofs ≤ ↑ofs' + delta → ↑ofs' + delta < ↑ofs + memory_chunk.size chunk → false) →
   store chunk m2 b ofs v = some m2' →
-  mem_inj f m1 m2' := sorry
+  mem_inj f m1 m2' := sorry'
 
 lemma store_bytes_mapped_inj {f m1 b1 ofs bytes1 n1 m2 b2 delta bytes2} :
   mem_inj f m1 m2 →
@@ -1189,13 +1189,13 @@ lemma store_bytes_mapped_inj {f m1 b1 ofs bytes1 n1 m2 b2 delta bytes2} :
   (↑ofs + delta).ex_nat (λ ofs',
   ∃ n2,
     store_bytes m2 b2 ofs' bytes2 = some n2
-    ∧ mem_inj f n1 n2) := sorry
+    ∧ mem_inj f n1 n2) := sorry'
 
 lemma store_bytes_unmapped_inj {f m1 b1 ofs bytes1 n1 m2} :
   mem_inj f m1 m2 →
   store_bytes m1 b1 ofs bytes1 = some n1 →
   f b1 = none →
-  mem_inj f n1 m2 := sorry
+  mem_inj f n1 m2 := sorry'
 
 lemma store_bytes_outside_inj {f m1 m2 b ofs bytes2 m2'} :
   mem_inj f m1 m2 →
@@ -1204,24 +1204,24 @@ lemma store_bytes_outside_inj {f m1 m2 b ofs bytes2 m2'} :
     perm m1 b' ofs' Cur Readable →
     ↑ofs ≤ ↑ofs' + delta → ↑ofs' + delta < ↑ofs + list.length bytes2 → false) →
   store_bytes m2 b ofs bytes2 = some m2' →
-  mem_inj f m1 m2' := sorry
+  mem_inj f m1 m2' := sorry'
 
 lemma store_bytes_empty_inj {f m1 b1 ofs1 m1' m2 b2 ofs2 m2'} :
   mem_inj f m1 m2 →
   store_bytes m1 b1 ofs1 [] = some m1' →
   store_bytes m2 b2 ofs2 [] = some m2' →
-  mem_inj f m1' m2' := sorry
+  mem_inj f m1' m2' := sorry'
 
 /- Preservation of allocations -/
 
 lemma alloc_right_inj {f m1 m2 lo hi} :
   mem_inj f m1 m2 →
-  mem_inj f m1 (m2.alloc lo hi) := sorry
+  mem_inj f m1 (m2.alloc lo hi) := sorry'
 
 lemma alloc_left_unmapped_inj {f m1 m2 lo hi} :
   mem_inj f m1 m2 →
   f m1.nextblock = none →
-  mem_inj f (m1.alloc lo hi) m2 := sorry
+  mem_inj f (m1.alloc lo hi) m2 := sorry'
 
 def inj_offset_aligned (delta : ℤ) (size : ℕ) : Prop :=
   ∀ chunk : memory_chunk, chunk.size ≤ size → ↑chunk.align ∣ delta
@@ -1232,12 +1232,12 @@ lemma alloc_left_mapped_inj {f m1 m2 lo hi b2 delta} :
   inj_offset_aligned delta (hi-lo) →
   (∀ ofs k p, lo ≤ ofs → ofs < hi → perm_Z m2 b2 (↑ofs + delta) k p) →
   f m1.nextblock = some (b2, delta) →
-  mem_inj f (m1.alloc lo hi) m2 := sorry
+  mem_inj f (m1.alloc lo hi) m2 := sorry'
 
 lemma free_left_inj {f m1 m2 b lo hi m1'} :
   mem_inj f m1 m2 →
   free m1 b lo hi = some m1' →
-  mem_inj f m1' m2 := sorry
+  mem_inj f m1' m2 := sorry'
 
 lemma free_right_inj {f m1 m2 b lo hi m2'} :
   mem_inj f m1 m2 →
@@ -1245,7 +1245,7 @@ lemma free_right_inj {f m1 m2 b lo hi m2'} :
   (∀ b' delta ofs k p,
     f b' = some (b, delta) →
     perm m1 b' ofs k p → ↑lo ≤ ↑ofs + delta → ↑ofs + delta < hi → false) →
-  mem_inj f m1 m2' := sorry
+  mem_inj f m1 m2' := sorry'
 
 /- Preservation of [drop_perm] operations. -/
 
@@ -1253,7 +1253,7 @@ lemma drop_unmapped_inj {f m1 m2 b lo hi p m1'} :
   mem_inj f m1 m2 →
   drop_perm m1 b lo hi p = some m1' →
   f b = none →
-  mem_inj f m1' m2 := sorry
+  mem_inj f m1' m2 := sorry'
 
 lemma drop_mapped_inj {f m1 m2 b1 b2 delta lo hi p m1'} :
   mem_inj f m1 m2 →
@@ -1262,7 +1262,7 @@ lemma drop_mapped_inj {f m1 m2 b1 b2 delta lo hi p m1'} :
   f b1 = some (b2, delta) →
   (↑lo + delta).all_nat (λlo', (↑hi + delta).all_nat $ λhi',
   ∃ m2', drop_perm m2 b2 lo' hi' p = some m2'
-   ∧ mem_inj f m1' m2') := sorry
+   ∧ mem_inj f m1' m2') := sorry'
 
 lemma drop_outside_inj {f m1 m2 b lo hi p m2'} :
   mem_inj f m1 m2 →
@@ -1271,7 +1271,7 @@ lemma drop_outside_inj {f m1 m2 b lo hi p m2'} :
     f b' = some (b, delta) →
     perm m1 b' ofs' k p →
     ↑lo ≤ ↑ofs' + delta → ↑ofs' + delta < hi → false) →
-  mem_inj f m1 m2' := sorry
+  mem_inj f m1 m2' := sorry'
 
 /- * Memory extensions -/
 
@@ -1287,24 +1287,24 @@ structure extends' (m1 m2 : mem) : Prop :=
 (perm_inv : ∀ b ofs k p, perm m1 b ofs Max Nonempty →
       perm m2 b ofs k p → perm m1 b ofs k p)
 
-theorem extends_refl (m) : extends' m m := sorry
+theorem extends_refl (m) : extends' m m := sorry'
 
 theorem load_extends {chunk m1 m2 b ofs v1} :
   extends' m1 m2 →
   load chunk m1 b ofs = some v1 →
-  ∃ v2, load chunk m2 b ofs = some v2 ∧ v1.lessdef v2 := sorry
+  ∃ v2, load chunk m2 b ofs = some v2 ∧ v1.lessdef v2 := sorry'
 
 theorem loadv_extends {chunk m1 m2 addr1 addr2 v1} :
   extends' m1 m2 →
   loadv chunk m1 addr1 = some v1 →
   addr1.lessdef addr2 →
-  ∃ v2, loadv chunk m2 addr2 = some v2 ∧ v1.lessdef v2 := sorry
+  ∃ v2, loadv chunk m2 addr2 = some v2 ∧ v1.lessdef v2 := sorry'
 
 theorem load_bytes_extends {m1 m2 b ofs len bytes1} :
   extends' m1 m2 →
   load_bytes m1 b ofs len = some bytes1 →
   ∃ bytes2, load_bytes m2 b ofs len = some bytes2
-              ∧ list.forall2 memval_lessdef bytes1 bytes2 := sorry
+              ∧ list.forall2 memval_lessdef bytes1 bytes2 := sorry'
 
 theorem store_within_extends {chunk m1 m2 b ofs v1 m1' v2} :
   extends' m1 m2 →
@@ -1312,13 +1312,13 @@ theorem store_within_extends {chunk m1 m2 b ofs v1 m1' v2} :
   v1.lessdef v2 →
   ∃ m2',
      store chunk m2 b ofs v2 = some m2'
-  ∧ extends' m1' m2' := sorry
+  ∧ extends' m1' m2' := sorry'
 
 theorem store_outside_extends {chunk m1 m2 b ofs v m2'} :
   extends' m1 m2 →
   store chunk m2 b ofs v = some m2' →
   (∀ ofs', perm m1 b ofs' Cur Readable → ofs ≤ ofs' → ofs' < ofs + chunk.size → false) →
-  extends' m1 m2' := sorry
+  extends' m1 m2' := sorry'
 
 theorem storev_extends {chunk m1 m2 addr1 v1 m1' addr2 v2} :
   extends' m1 m2 →
@@ -1327,7 +1327,7 @@ theorem storev_extends {chunk m1 m2 addr1 v1 m1' addr2 v2} :
   v1.lessdef v2 →
   ∃ m2',
      storev chunk m2 addr2 v2 = some m2'
-  ∧ extends' m1' m2' := sorry
+  ∧ extends' m1' m2' := sorry'
 
 theorem store_bytes_within_extends {m1 m2 b ofs bytes1 m1' bytes2} :
   extends' m1 m2 →
@@ -1335,57 +1335,57 @@ theorem store_bytes_within_extends {m1 m2 b ofs bytes1 m1' bytes2} :
   list.forall2 memval_lessdef bytes1 bytes2 →
   ∃ m2',
      store_bytes m2 b ofs bytes2 = some m2'
-  ∧ extends' m1' m2' := sorry
+  ∧ extends' m1' m2' := sorry'
 
 theorem store_bytes_outside_extends {m1 m2 b ofs bytes2 m2'} :
   extends' m1 m2 →
   store_bytes m2 b ofs bytes2 = some m2' →
   (∀ ofs', perm m1 b ofs' Cur Readable → ofs ≤ ofs' → ofs' < ofs + bytes2.length → false) →
-  extends' m1 m2' := sorry
+  extends' m1 m2' := sorry'
 
 theorem alloc_extends {m1 m2 lo1 hi1 lo2 hi2} :
   extends' m1 m2 →
   lo2 ≤ lo1 → hi1 ≤ hi2 →
-  extends' (m1.alloc lo1 hi1) (m2.alloc lo2 hi2) := sorry
+  extends' (m1.alloc lo1 hi1) (m2.alloc lo2 hi2) := sorry'
 
 theorem free_left_extends {m1 m2 b lo hi m1'} :
   extends' m1 m2 →
   free m1 b lo hi = some m1' →
-  extends' m1' m2 := sorry
+  extends' m1' m2 := sorry'
 
 theorem free_right_extends {m1 m2 b lo hi m2'} :
   extends' m1 m2 →
   free m2 b lo hi = some m2' →
   (∀ ofs k p, perm m1 b ofs k p → lo ≤ ofs → ofs < hi → false) →
-  extends' m1 m2' := sorry
+  extends' m1 m2' := sorry'
 
 theorem free_parallel_extends {m1 m2 b lo hi m1'} :
   extends' m1 m2 →
   free m1 b lo hi = some m1' →
   ∃ m2',
      free m2 b lo hi = some m2'
-  ∧ extends' m1' m2' := sorry
+  ∧ extends' m1' m2' := sorry'
 
 theorem valid_block_extends {m1 m2 b} :
   extends' m1 m2 →
-  (valid_block m1 b ↔ valid_block m2 b) := sorry
+  (valid_block m1 b ↔ valid_block m2 b) := sorry'
 
 theorem perm_extends {m1 m2 b ofs k p} :
-  extends' m1 m2 → perm m1 b ofs k p → perm m2 b ofs k p := sorry
+  extends' m1 m2 → perm m1 b ofs k p → perm m2 b ofs k p := sorry'
 
 theorem perm_extends_inv {m1 m2 b ofs k p} :
   extends' m1 m2 → perm m1 b ofs Max Nonempty →
-    perm m2 b ofs k p → perm m1 b ofs k p := sorry
+    perm m2 b ofs k p → perm m1 b ofs k p := sorry'
 
 theorem valid_access_extends {m1 m2 chunk b ofs p} :
-  extends' m1 m2 → valid_access m1 chunk b ofs p → valid_access m2 chunk b ofs p := sorry
+  extends' m1 m2 → valid_access m1 chunk b ofs p → valid_access m2 chunk b ofs p := sorry'
 
 theorem valid_pointer_extends {m1 m2 b ofs} :
-  extends' m1 m2 → valid_pointer m1 b ofs → valid_pointer m2 b ofs := sorry
+  extends' m1 m2 → valid_pointer m1 b ofs → valid_pointer m2 b ofs := sorry'
 
 theorem weak_valid_pointer_extends {m1 m2 b ofs} :
   extends' m1 m2 →
-  weak_valid_pointer m1 b ofs → weak_valid_pointer m2 b ofs := sorry
+  weak_valid_pointer m1 b ofs → weak_valid_pointer m2 b ofs := sorry'
 
 /- * Memory injections -/
 
@@ -1422,47 +1422,47 @@ structure inject (f : meminj) (m1 m2 : mem) : Prop :=
 theorem valid_block_inject_1 {f : meminj} {m1 m2 b1 b2 delta} :
   f b1 = some (b2, delta) →
   inject f m1 m2 →
-  valid_block m1 b1 := sorry
+  valid_block m1 b1 := sorry'
 
 theorem valid_block_inject_2 {f : meminj} {m1 m2 b1 b2 delta} :
   f b1 = some (b2, delta) →
   inject f m1 m2 →
-  valid_block m2 b2 := sorry
+  valid_block m2 b2 := sorry'
 
 theorem perm_inject {f : meminj} {m1 m2 b1 b2 delta ofs k p} :
   f b1 = some (b2, delta) →
   inject f m1 m2 →
-  perm m1 b1 ofs k p → perm_Z m2 b2 (ofs + delta) k p := sorry
+  perm m1 b1 ofs k p → perm_Z m2 b2 (ofs + delta) k p := sorry'
 
 theorem perm_inject_inv {f m1 m2 b1 ofs b2 delta k p} :
   inject f m1 m2 →
   f b1 = some (b2, delta) →
   perm m1 b1 ofs Max Nonempty →
   perm_Z m2 b2 (ofs + delta) k p →
-  perm m1 b1 ofs k p := sorry
+  perm m1 b1 ofs k p := sorry'
 
 theorem range_perm_inject {f : meminj} {m1 m2 b1 b2 delta lo hi k p} :
   f b1 = some (b2, delta) →
   inject f m1 m2 →
-  range_perm m1 b1 lo hi k p → range_perm_Z m2 b2 (lo + delta) (hi + delta) k p := sorry
+  range_perm m1 b1 lo hi k p → range_perm_Z m2 b2 (lo + delta) (hi + delta) k p := sorry'
 
 theorem valid_access_inject {f : meminj} {m1 m2 chunk b1 ofs b2 delta p} :
   f b1 = some (b2, delta) →
   inject f m1 m2 →
   valid_access m1 chunk b1 ofs p →
-  valid_access_Z m2 chunk b2 (ofs + delta) p := sorry
+  valid_access_Z m2 chunk b2 (ofs + delta) p := sorry'
 
 theorem valid_pointer_inject {f : meminj} {m1 m2 b1 ofs b2 delta} :
   f b1 = some (b2, delta) →
   inject f m1 m2 →
   valid_pointer m1 b1 ofs →
-  (↑ofs + delta).ex_nat (λofs', valid_pointer m2 b2 ofs') := sorry
+  (↑ofs + delta).ex_nat (λofs', valid_pointer m2 b2 ofs') := sorry'
 
 theorem weak_valid_pointer_inject {f : meminj} {m1 m2 b1 ofs b2 delta} :
   f b1 = some (b2, delta) →
   inject f m1 m2 →
   weak_valid_pointer m1 b1 ofs →
-  (↑ofs + delta).ex_nat (λofs', weak_valid_pointer m2 b2 ofs') := sorry
+  (↑ofs + delta).ex_nat (λofs', weak_valid_pointer m2 b2 ofs') := sorry'
 
 /- The following lemmas establish the absence of machine integer overflow
   during address computations. -/
@@ -1471,37 +1471,37 @@ lemma address_inject {f m1 m2 b1} {ofs1 : ptrofs} {b2 delta p} :
   inject f m1 m2 →
   perm m1 b1 (unsigned ofs1) Cur p →
   f b1 = some (b2, delta) →
-  ↑(unsigned (ofs1 + repr delta)) = ↑(unsigned ofs1) + delta := sorry
+  ↑(unsigned (ofs1 + repr delta)) = ↑(unsigned ofs1) + delta := sorry'
 
 lemma address_inject' {f m1 m2 chunk b1} {ofs1 : ptrofs} {b2 delta} :
   inject f m1 m2 →
   valid_access m1 chunk b1 (unsigned ofs1) Nonempty →
   f b1 = some (b2, delta) →
-  ↑(unsigned (ofs1 + repr delta)) = ↑(unsigned ofs1) + delta := sorry
+  ↑(unsigned (ofs1 + repr delta)) = ↑(unsigned ofs1) + delta := sorry'
 
 theorem weak_valid_pointer_inject_no_overflow {f m1 m2 b} {ofs : ptrofs} {b' delta} :
   inject f m1 m2 →
   weak_valid_pointer m1 b (unsigned ofs) →
   f b = some (b', delta) →
-  unsigned ofs + unsigned (repr delta : ptrofs) ≤ max_unsigned ptrofs.wordsize := sorry
+  unsigned ofs + unsigned (repr delta : ptrofs) ≤ max_unsigned ptrofs.wordsize := sorry'
 
 theorem valid_pointer_inject_no_overflow {f m1 m2 b} {ofs : ptrofs} {b' delta} :
   inject f m1 m2 →
   valid_pointer m1 b (unsigned ofs) →
   f b = some (b', delta) →
-  unsigned ofs + unsigned (repr delta : ptrofs) ≤ max_unsigned ptrofs.wordsize := sorry
+  unsigned ofs + unsigned (repr delta : ptrofs) ≤ max_unsigned ptrofs.wordsize := sorry'
 
 theorem valid_pointer_inject_val {f m1 m2 b ofs b' ofs'} :
   inject f m1 m2 →
   valid_pointer m1 b (unsigned ofs) →
   val.inject f (Vptr b ofs) (Vptr b' ofs') →
-  valid_pointer m2 b' (unsigned ofs') := sorry
+  valid_pointer m2 b' (unsigned ofs') := sorry'
 
 theorem weak_valid_pointer_inject_val {f m1 m2 b ofs b' ofs'} :
   inject f m1 m2 →
   weak_valid_pointer m1 b (unsigned ofs) →
   val.inject f (Vptr b ofs) (Vptr b' ofs') →
-  weak_valid_pointer m2 b' (unsigned ofs') := sorry
+  weak_valid_pointer m2 b' (unsigned ofs') := sorry'
 
 theorem inject_no_overlap {f m1 m2 b1 b2 b1' b2' delta1 delta2 ofs1 ofs2} :
   inject f m1 m2 →
@@ -1510,7 +1510,7 @@ theorem inject_no_overlap {f m1 m2 b1 b2 b1' b2' delta1 delta2 ofs1 ofs2} :
   f b2 = some (b2', delta2) →
   perm m1 b1 ofs1 Max Nonempty →
   perm m1 b2 ofs2 Max Nonempty →
-  b1' ≠ b2' ∨ ↑ofs1 + delta1 ≠ ofs2 + delta2 := sorry
+  b1' ≠ b2' ∨ ↑ofs1 + delta1 ≠ ofs2 + delta2 := sorry'
 
 theorem different_pointers_inject {f m m' b1 b2} {ofs1 ofs2 : ptrofs} {b1' delta1 b2' delta2} :
   inject f m m' →
@@ -1521,7 +1521,7 @@ theorem different_pointers_inject {f m m' b1 b2} {ofs1 ofs2 : ptrofs} {b1' delta
   f b2 = some (b2', delta2) →
   b1' ≠ b2' ∨
   unsigned (ofs1 + repr delta1) ≠
-  unsigned (ofs2 + repr delta2) := sorry
+  unsigned (ofs2 + repr delta2) := sorry'
 
 theorem disjoint_or_equal_inject {f m m' b1 b1' delta1 b2 b2' delta2 ofs1 ofs2 sz} :
   inject f m m' →
@@ -1533,7 +1533,7 @@ theorem disjoint_or_equal_inject {f m m' b1 b1' delta1 b2 b2' delta2 ofs1 ofs2 s
   b1 ≠ b2 ∨ ofs1 = ofs2 ∨ ofs1 + sz ≤ ofs2 ∨ ofs2 + sz ≤ ofs1 →
   b1' ≠ b2' ∨ ↑ofs1 + delta1 = ofs2 + delta2
              ∨ ↑ofs1 + delta1 + sz ≤ ofs2 + delta2
-             ∨ ↑ofs2 + delta2 + sz ≤ ofs1 + delta1 := sorry
+             ∨ ↑ofs2 + delta2 + sz ≤ ofs1 + delta1 := sorry'
 
 theorem aligned_area_inject {f m m' b ofs al sz b' delta} :
   inject f m m' →
@@ -1542,7 +1542,7 @@ theorem aligned_area_inject {f m m' b ofs al sz b' delta} :
   range_perm m b ofs (ofs + sz) Cur Nonempty →
   al ∣ ofs →
   f b = some (b', delta) →
-  ↑al ∣ ↑ofs + delta := sorry
+  ↑al ∣ ↑ofs + delta := sorry'
 
 /- Preservation of loads -/
 
@@ -1551,13 +1551,13 @@ theorem load_inject {f m1 m2 chunk b1 ofs b2 delta v1} :
   load chunk m1 b1 ofs = some v1 →
   f b1 = some (b2, delta) →
   (↑ofs + delta).ex_nat (λ ofs',
-    ∃ v2, load chunk m2 b2 ofs' = some v2 ∧ val.inject f v1 v2) := sorry
+    ∃ v2, load chunk m2 b2 ofs' = some v2 ∧ val.inject f v1 v2) := sorry'
 
 theorem loadv_inject {f m1 m2 chunk a1 a2 v1} :
   inject f m1 m2 →
   loadv chunk m1 a1 = some v1 →
   val.inject f a1 a2 →
-  ∃ v2, loadv chunk m2 a2 = some v2 ∧ val.inject f v1 v2 := sorry
+  ∃ v2, loadv chunk m2 a2 = some v2 ∧ val.inject f v1 v2 := sorry'
 
 theorem load_bytes_inject {f m1 m2 b1 ofs len b2 delta bytes1} :
   inject f m1 m2 →
@@ -1565,7 +1565,7 @@ theorem load_bytes_inject {f m1 m2 b1 ofs len b2 delta bytes1} :
   f b1 = some (b2, delta) →
   (↑ofs + delta).ex_nat (λofs',
   ∃ bytes2, load_bytes m2 b2 ofs' len = some bytes2
-              ∧ list.forall2 (memval_inject f) bytes1 bytes2) := sorry
+              ∧ list.forall2 (memval_inject f) bytes1 bytes2) := sorry'
 
 /- Preservation of stores -/
 
@@ -1576,13 +1576,13 @@ theorem store_mapped_inject {f chunk m1 b1 ofs v1 n1 m2 b2 delta v2} :
   val.inject f v1 v2 →
   (↑ofs + delta).ex_nat (λofs', ∃ n2,
     store chunk m2 b2 ofs' v2 = some n2
-    ∧ inject f n1 n2) := sorry
+    ∧ inject f n1 n2) := sorry'
 
 theorem store_unmapped_inject {f chunk m1 b1 ofs v1 n1 m2} :
   inject f m1 m2 →
   store chunk m1 b1 ofs v1 = some n1 →
   f b1 = none →
-  inject f n1 m2 := sorry
+  inject f n1 m2 := sorry'
 
 theorem store_outside_inject {f m1 m2} {chunk : memory_chunk} {b ofs v m2'} :
   inject f m1 m2 →
@@ -1591,14 +1591,14 @@ theorem store_outside_inject {f m1 m2} {chunk : memory_chunk} {b ofs v m2'} :
     perm m1 b' ofs' Cur Readable →
     ↑ofs ≤ ↑ofs' + delta → ↑ofs' + delta < ↑ofs + chunk.size → false) →
   store chunk m2 b ofs v = some m2' →
-  inject f m1 m2' := sorry
+  inject f m1 m2' := sorry'
 
 theorem storev_mapped_inject {f chunk m1 a1 v1 n1 m2 a2 v2} :
   inject f m1 m2 →
   storev chunk m1 a1 v1 = some n1 →
   val.inject f a1 a2 →
   val.inject f v1 v2 →
-  ∃ n2, storev chunk m2 a2 v2 = some n2 ∧ inject f n1 n2 := sorry
+  ∃ n2, storev chunk m2 a2 v2 = some n2 ∧ inject f n1 n2 := sorry'
 
 theorem store_bytes_mapped_inject {f m1 b1 ofs bytes1 n1 m2 b2 delta bytes2} :
   inject f m1 m2 →
@@ -1608,13 +1608,13 @@ theorem store_bytes_mapped_inject {f m1 b1 ofs bytes1 n1 m2 b2 delta bytes2} :
   (↑ofs + delta).ex_nat (λofs',
   ∃ n2,
     store_bytes m2 b2 ofs' bytes2 = some n2
-    ∧ inject f n1 n2) := sorry
+    ∧ inject f n1 n2) := sorry'
 
 theorem store_bytes_unmapped_inject {f m1 b1 ofs bytes1 n1 m2} :
   inject f m1 m2 →
   store_bytes m1 b1 ofs bytes1 = some n1 →
   f b1 = none →
-  inject f n1 m2 := sorry
+  inject f n1 m2 := sorry'
 
 theorem store_bytes_outside_inject {f m1 m2 b ofs bytes2 m2'} :
   inject f m1 m2 →
@@ -1623,19 +1623,19 @@ theorem store_bytes_outside_inject {f m1 m2 b ofs bytes2 m2'} :
     perm m1 b' ofs' Cur Readable →
     ↑ofs ≤ ↑ofs' + delta → ↑ofs' + delta < ↑ofs + bytes2.length → false) →
   store_bytes m2 b ofs bytes2 = some m2' →
-  inject f m1 m2' := sorry
+  inject f m1 m2' := sorry'
 
 theorem store_bytes_empty_inject {f m1 b1 ofs1 m1' m2 b2 ofs2 m2'} :
   inject f m1 m2 →
   store_bytes m1 b1 ofs1 [] = some m1' →
   store_bytes m2 b2 ofs2 [] = some m2' →
-  inject f m1' m2' := sorry
+  inject f m1' m2' := sorry'
 
 /- Preservation of allocations -/
 
 theorem alloc_right_inject {f m1 m2 lo hi} :
   inject f m1 m2 →
-  inject f m1 (m2.alloc lo hi) := sorry
+  inject f m1 (m2.alloc lo hi) := sorry'
 
 theorem alloc_left_unmapped_inject {f m1 m2 lo hi} :
   inject f m1 m2 →
@@ -1643,7 +1643,7 @@ theorem alloc_left_unmapped_inject {f m1 m2 lo hi} :
      inject f' (m1.alloc lo hi) m2
   ∧ inject_incr f f'
   ∧ f' m1.nextblock = none
-  ∧ (∀ b, b ≠ m1.nextblock → f' b = f b) := sorry
+  ∧ (∀ b, b ≠ m1.nextblock → f' b = f b) := sorry'
 
 theorem alloc_left_mapped_inject {f m1 m2 lo hi b2 delta} :
   inject f m1 m2 →
@@ -1660,7 +1660,7 @@ theorem alloc_left_mapped_inject {f m1 m2 lo hi b2 delta} :
      inject f' (m1.alloc lo hi) m2
   ∧ inject_incr f f'
   ∧ f' m1.nextblock = some (b2, delta)
-  ∧ (∀ b, b ≠ m1.nextblock → f' b = f b) := sorry
+  ∧ (∀ b, b ≠ m1.nextblock → f' b = f b) := sorry'
 
 theorem alloc_parallel_inject {f m1 m2 lo1 hi1 lo2 hi2} :
   inject f m1 m2 →
@@ -1669,19 +1669,19 @@ theorem alloc_parallel_inject {f m1 m2 lo1 hi1 lo2 hi2} :
     inject f' (m1.alloc lo1 hi1) (m2.alloc lo2 hi2)
   ∧ inject_incr f f'
   ∧ f' m1.nextblock = some (m2.nextblock, 0)
-  ∧ (∀ b, b ≠ m1.nextblock → f' b = f b) := sorry
+  ∧ (∀ b, b ≠ m1.nextblock → f' b = f b) := sorry'
 
 /- Preservation of [free] operations -/
 
 lemma free_left_inject {f m1 m2 b lo hi m1'} :
   inject f m1 m2 →
   free m1 b lo hi = some m1' →
-  inject f m1' m2 := sorry
+  inject f m1' m2 := sorry'
 
 lemma free_list_left_inject {f m2 l m1 m1'} :
   inject f m1 m2 →
   free_list m1 l = some m1' →
-  inject f m1' m2 := sorry
+  inject f m1' m2 := sorry'
 
 lemma free_right_inject {f m1 m2 b lo hi m2'} :
   inject f m1 m2 →
@@ -1689,13 +1689,13 @@ lemma free_right_inject {f m1 m2 b lo hi m2'} :
   (∀ b1 delta ofs k p,
     f b1 = some (b, delta) → perm m1 b1 ofs k p →
     ↑lo ≤ ↑ofs + delta → ↑ofs + delta < hi → false) →
-  inject f m1 m2' := sorry
+  inject f m1 m2' := sorry'
 
 lemma perm_free_list {l m m' b ofs k p} :
   free_list m l = some m' →
   perm m' b ofs k p →
   perm m b ofs k p ∧
-  (∀ lo hi, (b, lo, hi) ∈ l → lo ≤ ofs → ofs < hi → false) := sorry
+  (∀ lo hi, (b, lo, hi) ∈ l → lo ≤ ofs → ofs < hi → false) := sorry'
 
 theorem free_inject {f m1 l m1' m2 b lo hi m2'} :
   inject f m1 m2 →
@@ -1705,7 +1705,7 @@ theorem free_inject {f m1 l m1' m2 b lo hi m2'} :
     f b1 = some (b, delta) →
     perm m1 b1 ofs k p → ↑lo ≤ ↑ofs + delta → ↑ofs + delta < hi →
     ∃ lo1, ∃ hi1, (b1, lo1, hi1) ∈ l ∧ lo1 ≤ ofs ∧ ofs < hi1) →
-  inject f m1' m2' := sorry
+  inject f m1' m2' := sorry'
 
 theorem free_parallel_inject {f m1 m2 b lo hi m1' b' delta} :
   inject f m1 m2 →
@@ -1713,7 +1713,7 @@ theorem free_parallel_inject {f m1 m2 b lo hi m1' b' delta} :
   f b = some (b', delta) →
   (↑lo + delta).ex_nat (λ lo',
   (↑hi + delta).ex_nat (λ hi',
-  ∃ m2', free m2 b' lo' hi' = some m2' ∧ inject f m1' m2')) := sorry
+  ∃ m2', free m2 b' lo' hi' = some m2' ∧ inject f m1' m2')) := sorry'
 
 lemma drop_outside_inject : ∀ f m1 m2 b lo hi p m2',
   inject f m1 m2 →
@@ -1721,31 +1721,31 @@ lemma drop_outside_inject : ∀ f m1 m2 b lo hi p m2',
   (∀ b' delta ofs k p,
     f b' = some (b, delta) →
     perm m1 b' ofs k p → ↑lo ≤ ↑ofs + delta → ↑ofs + delta < hi → false) →
-  inject f m1 m2' := sorry
+  inject f m1 m2' := sorry'
 
 /- Composing two memory injections. -/
 
 lemma mem_inj_compose {f f' m1 m2 m3} :
-  mem_inj f m1 m2 → mem_inj f' m2 m3 → mem_inj (f.comp f') m1 m3 := sorry
+  mem_inj f m1 m2 → mem_inj f' m2 m3 → mem_inj (f.comp f') m1 m3 := sorry'
 
 theorem inject_compose {f f' m1 m2 m3} :
   inject f m1 m2 → inject f' m2 m3 →
-  inject (f.comp f') m1 m3 := sorry
+  inject (f.comp f') m1 m3 := sorry'
 
 lemma val_lessdef_inject_compose {f v1 v2 v3} :
-  val.lessdef v1 v2 → val.inject f v2 v3 → val.inject f v1 v3 := sorry
+  val.lessdef v1 v2 → val.inject f v2 v3 → val.inject f v1 v3 := sorry'
 
 lemma val_inject_lessdef_compose {f v1 v2 v3} :
-  val.inject f v1 v2 → val.lessdef v2 v3 → val.inject f v1 v3 := sorry
+  val.inject f v1 v2 → val.lessdef v2 v3 → val.inject f v1 v3 := sorry'
 
 lemma extends_inject_compose {f m1 m2 m3} :
-  extends' m1 m2 → inject f m2 m3 → inject f m1 m3 := sorry
+  extends' m1 m2 → inject f m2 m3 → inject f m1 m3 := sorry'
 
 lemma inject_extends_compose {f m1 m2 m3} :
-  inject f m1 m2 → extends' m2 m3 → inject f m1 m3 := sorry
+  inject f m1 m2 → extends' m2 m3 → inject f m1 m3 := sorry'
 
 lemma extends_extends_compose {m1 m2 m3} :
-  extends' m1 m2 → extends' m2 m3 → extends' m1 m3 := sorry
+  extends' m1 m2 → extends' m2 m3 → extends' m1 m3 := sorry'
 
 /- Injecting a memory into itself. -/
 
@@ -1755,30 +1755,30 @@ def flat_inj (thr : block) : meminj :=
 def inject_neutral (thr : block) (m : mem) :=
   mem_inj (flat_inj thr) m m
 
-theorem flat_inj_no_overlap {thr m} : meminj_no_overlap (flat_inj thr) m := sorry
+theorem flat_inj_no_overlap {thr m} : meminj_no_overlap (flat_inj thr) m := sorry'
 
 theorem neutral_inject {m : mem} :
-  inject_neutral m.nextblock m → inject (flat_inj m.nextblock) m m := sorry
+  inject_neutral m.nextblock m → inject (flat_inj m.nextblock) m m := sorry'
 
-theorem empty_inject_neutral {thr} : inject_neutral thr ∅ := sorry
+theorem empty_inject_neutral {thr} : inject_neutral thr ∅ := sorry'
 
 theorem alloc_inject_neutral {thr m lo hi} :
   inject_neutral thr m →
   m.nextblock < thr →
-  inject_neutral thr (m.alloc lo hi) := sorry
+  inject_neutral thr (m.alloc lo hi) := sorry'
 
 theorem store_inject_neutral {chunk m b ofs v m' thr} :
   store chunk m b ofs v = some m' →
   inject_neutral thr m →
   b < thr →
   val.inject (flat_inj thr) v v →
-  inject_neutral thr m' := sorry
+  inject_neutral thr m' := sorry'
 
 theorem drop_inject_neutral {m b lo hi p m' thr} :
   drop_perm m b lo hi p = some m' →
   inject_neutral thr m →
   b < thr →
-  inject_neutral thr m' := sorry
+  inject_neutral thr m' := sorry'
 
 /- * Invariance properties between two memory states -/
 
@@ -1796,72 +1796,72 @@ structure unchanged_on (m_before m_after : mem) : Prop :=
   get1 ofs (m_after.get_block b) =
   get1 ofs (m_before.get_block b))
 
-lemma unchanged_on_refl {m} : unchanged_on m m := sorry
+lemma unchanged_on_refl {m} : unchanged_on m m := sorry'
 
 lemma valid_block_unchanged_on {m m' b} :
-  unchanged_on m m' → valid_block m b → valid_block m' b := sorry
+  unchanged_on m m' → valid_block m b → valid_block m' b := sorry'
 
 lemma perm_unchanged_on {m m' b ofs k p} :
   unchanged_on m m' → P b ofs →
-  perm m b ofs k p → perm m' b ofs k p := sorry
+  perm m b ofs k p → perm m' b ofs k p := sorry'
 
 lemma perm_unchanged_on_2 {m m' b ofs k p} :
   unchanged_on m m' → P b ofs → valid_block m b →
-  perm m' b ofs k p → perm m b ofs k p := sorry
+  perm m' b ofs k p → perm m b ofs k p := sorry'
 
-lemma unchanged_on_trans {m1 m2 m3} : unchanged_on m1 m2 → unchanged_on m2 m3 → unchanged_on m1 m3 := sorry
+lemma unchanged_on_trans {m1 m2 m3} : unchanged_on m1 m2 → unchanged_on m2 m3 → unchanged_on m1 m3 := sorry'
 
 lemma load_bytes_unchanged_on_1 {m m' b ofs n} :
   unchanged_on m m' →
   valid_block m b →
   (∀ i, ofs ≤ i → i < ofs + n → P b i) →
-  load_bytes m' b ofs n = load_bytes m b ofs n := sorry
+  load_bytes m' b ofs n = load_bytes m b ofs n := sorry'
 
 lemma load_bytes_unchanged_on {m m' b ofs n bytes} :
   unchanged_on m m' →
   (∀ i, ofs ≤ i → i < ofs + n → P b i) →
   load_bytes m b ofs n = some bytes →
-  load_bytes m' b ofs n = some bytes := sorry
+  load_bytes m' b ofs n = some bytes := sorry'
 
 lemma load_unchanged_on_1 {m m' b ofs} {chunk : memory_chunk} :
   unchanged_on m m' →
   valid_block m b →
   (∀ i, ofs ≤ i → i < ofs + chunk.size → P b i) →
-  load chunk m' b ofs = load chunk m b ofs := sorry
+  load chunk m' b ofs = load chunk m b ofs := sorry'
 
 lemma load_unchanged_on {m m' b ofs v} {chunk : memory_chunk}  :
   unchanged_on m m' →
   (∀ i, ofs ≤ i → i < ofs + chunk.size → P b i) →
   load chunk m b ofs = some v →
-  load chunk m' b ofs = some v := sorry
+  load chunk m' b ofs = some v := sorry'
 
 lemma store_unchanged_on {chunk m b ofs v m'} :
   store chunk m b ofs v = some m' →
   (∀ i, ofs ≤ i → i < ofs + chunk.size → ¬ P b i) →
-  unchanged_on m m' := sorry
+  unchanged_on m m' := sorry'
 
 lemma store_bytes_unchanged_on {m b ofs bytes m'} :
   store_bytes m b ofs bytes = some m' →
   (∀ i, ofs ≤ i → i < ofs + bytes.length → ¬ P b i) →
-  unchanged_on m m' := sorry
+  unchanged_on m m' := sorry'
 
 lemma alloc_unchanged_on {m lo hi} :
-  unchanged_on m (m.alloc lo hi) := sorry
+  unchanged_on m (m.alloc lo hi) := sorry'
 
 lemma free_unchanged_on {m b lo hi m'} :
   free m b lo hi = some m' →
   (∀ i, lo ≤ i → i < hi → ¬ P b i) →
-  unchanged_on m m' := sorry
+  unchanged_on m m' := sorry'
 
 lemma drop_perm_unchanged_on {m b lo hi p m'} :
   drop_perm m b lo hi p = some m' →
   (∀ i, lo ≤ i → i < hi → ¬ P b i) →
-  unchanged_on m m' := sorry
+  unchanged_on m m' := sorry'
 
 end unchanged_on
 
 lemma unchanged_on_implies (P Q : block → ℕ → Prop) {m m'} :
   (∀ b ofs, Q b ofs → valid_block m b → P b ofs) →
-  unchanged_on P m m' → unchanged_on Q m m' := sorry
+  unchanged_on P m m' → unchanged_on Q m m' := sorry'
 
 end memory

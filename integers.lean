@@ -44,18 +44,18 @@ namespace int64
 def is_power2 (x : int64) : option int32 :=
 ucoe <$> is_power2 x
 
-lemma is_power2_rng (n logn) : is_power2 n = some logn → unsigned logn < 64 := sorry
+lemma is_power2_rng (n logn) : is_power2 n = some logn → unsigned logn < 64 := sorry'
 
-theorem is_power2_range (n logn) : is_power2 n = some logn → ltu logn 32 := sorry
+theorem is_power2_range (n logn) : is_power2 n = some logn → ltu logn 32 := sorry'
 
 lemma is_power2_correct (n logn) : is_power2 n = some logn →
-  unsigned n = 2^unsigned logn := sorry
+  unsigned n = 2^unsigned logn := sorry'
    
 theorem mul_pow2 (x n logn) : is_power2 n = some logn →
-  x * n = shl x (ucoe logn) := sorry
+  x * n = shl x (ucoe logn) := sorry'
 
 theorem divu_pow2 (x n logn) : is_power2 n = some logn →
-  divu x n = shru x (ucoe logn) := sorry
+  divu x n = shru x (ucoe logn) := sorry'
 
 /- Decomposing 64-bit ints as pairs of 32-bit ints -/
 
@@ -65,30 +65,30 @@ def hiword (n : int64) : int32 := ucoe (shru n 32)
 
 def ofwords (hi lo : int32) : int64 := word.or (shl (ucoe hi) 32) (ucoe lo)
 
-lemma bits_loword (n i) : i < 32 → test_bit (loword n) i = test_bit n i := sorry
+lemma bits_loword (n i) : i < 32 → test_bit (loword n) i = test_bit n i := sorry'
 
-lemma bits_hiword (n i) : i < 32 → test_bit (hiword n) i = test_bit n (i + 32) := sorry
+lemma bits_hiword (n i) : i < 32 → test_bit (hiword n) i = test_bit n (i + 32) := sorry'
 
 lemma bits_ofwords (hi lo i) :
-  test_bit (ofwords hi lo) i = if i < 32 then test_bit lo i else test_bit hi (i - 32) := sorry
+  test_bit (ofwords hi lo) i = if i < 32 then test_bit lo i else test_bit hi (i - 32) := sorry'
 
-lemma lo_ofwords (hi lo) : loword (ofwords hi lo) = lo := sorry
+lemma lo_ofwords (hi lo) : loword (ofwords hi lo) = lo := sorry'
 
-lemma hi_ofwords (hi lo) : hiword (ofwords hi lo) = hi := sorry
+lemma hi_ofwords (hi lo) : hiword (ofwords hi lo) = hi := sorry'
 
-lemma ofwords_recompose (n) : ofwords (hiword n) (loword n) = n := sorry
+lemma ofwords_recompose (n) : ofwords (hiword n) (loword n) = n := sorry'
 
-lemma ofwords_add (lo hi) : ofwords hi lo = repr (unsigned hi * 2^32 + unsigned lo) := sorry
+lemma ofwords_add (lo hi) : ofwords hi lo = repr (unsigned hi * 2^32 + unsigned lo) := sorry'
 
-lemma ofwords_add' (lo hi) : unsigned (ofwords hi lo) = unsigned hi * 2^32 + unsigned lo := sorry
+lemma ofwords_add' (lo hi) : unsigned (ofwords hi lo) = unsigned hi * 2^32 + unsigned lo := sorry'
 
-lemma ofwords_add'' (lo hi) : signed (ofwords hi lo) = signed hi * 2^32 + unsigned lo := sorry
+lemma ofwords_add'' (lo hi) : signed (ofwords hi lo) = signed hi * 2^32 + unsigned lo := sorry'
 
 /- Expressing 64-bit operations in terms of 32-bit operations -/
 
 lemma decompose_bitwise_binop {f : ∀ {w}, word w → word w → word w} {f' : bool → bool → bool} :
   (∀ {w} (x y : word w) (i : ℕ), i < wordsize w → test_bit (f x y) i = f' (test_bit x i) (test_bit y i)) →
-  ∀ xh xl yh yl, f (ofwords xh xl) (ofwords yh yl) = ofwords (f xh yh) (f xl yl) := sorry
+  ∀ xh xl yh yl, f (ofwords xh xl) (ofwords yh yl) = ofwords (f xh yh) (f xl yl) := sorry'
 
 lemma decompose_and : ∀ xh xl yh yl,
   word.and (ofwords xh xl) (ofwords yh yl) = ofwords (word.and xh yh) (word.and xl yl) :=
@@ -102,55 +102,55 @@ lemma decompose_xor : ∀ xh xl yh yl,
   word.xor (ofwords xh xl) (ofwords yh yl) = ofwords (word.xor xh yh) (word.xor xl yl) :=
 decompose_bitwise_binop @bits_xor
 
-lemma decompose_not (xh xl) : word.not (ofwords xh xl) = ofwords (word.not xh) (word.not xl) := sorry
+lemma decompose_not (xh xl) : word.not (ofwords xh xl) = ofwords (word.not xh) (word.not xl) := sorry'
 
 lemma decompose_shl_1 (xh xl y) : unsigned y < 32 → shl (ofwords xh xl) (ucoe y) =
-  ofwords (word.or (shl xh y) (shru xl (32 - y))) (shl xl y) := sorry
+  ofwords (word.or (shl xh y) (shru xl (32 - y))) (shl xl y) := sorry'
 
 lemma decompose_shl_2 (xh xl y) : 32 ≤ unsigned y → unsigned y < 64 →
-  shl (ofwords xh xl) (ucoe y) = ofwords (shl xl (y - 32)) 0 := sorry
+  shl (ofwords xh xl) (ucoe y) = ofwords (shl xl (y - 32)) 0 := sorry'
 
 lemma decompose_shru_1 (xh xl y) : unsigned y < 32 → shru (ofwords xh xl) (ucoe y) =
-  ofwords (shru xh y) (word.or (shru xl y) (shl xh (32 - y))) := sorry
+  ofwords (shru xh y) (word.or (shru xl y) (shl xh (32 - y))) := sorry'
 
 lemma decompose_shru_2 (xh xl y) : 32 ≤ unsigned y → unsigned y < 64 →
-  shru (ofwords xh xl) (ucoe y) = ofwords 0 (shru xh (y - 32)) := sorry
+  shru (ofwords xh xl) (ucoe y) = ofwords 0 (shru xh (y - 32)) := sorry'
 
 lemma decompose_shr_1 (xh xl y) : unsigned y < 32 → shr (ofwords xh xl) (ucoe y) =
-  ofwords (shr xh y) (word.or (shru xl y) (shl xh (32 - y))) := sorry
+  ofwords (shr xh y) (word.or (shru xl y) (shl xh (32 - y))) := sorry'
 
 lemma decompose_shr_2 (xh xl y) : 32 ≤ unsigned y → unsigned y < 64 →
-  shr (ofwords xh xl) (ucoe y) = ofwords (shr xh (32 - 1)) (shr xh (y - 32)) := sorry
+  shr (ofwords xh xl) (ucoe y) = ofwords (shr xh (32 - 1)) (shr xh (y - 32)) := sorry'
 
 lemma decompose_add (xh xl yh yl) : ofwords xh xl + ofwords yh yl =
-  ofwords (xh + yh + (add_carry xl yl 0)) (xl + yl) := sorry
+  ofwords (xh + yh + (add_carry xl yl 0)) (xl + yl) := sorry'
 
 lemma decompose_sub (xh xl yh yl) : ofwords xh xl - ofwords yh yl =
-  ofwords (xh - yh - sub_borrow xl yl 0) (xl - yl) := sorry
+  ofwords (xh - yh - sub_borrow xl yl 0) (xl - yl) := sorry'
 
 lemma decompose_sub' (xh xl yh yl) : ofwords xh xl - ofwords yh yl =
-  ofwords (xh + word.not yh + add_carry xl (word.not yl) 1) (xl - yl) := sorry
+  ofwords (xh + word.not yh + add_carry xl (word.not yl) 1) (xl - yl) := sorry'
 
-lemma mul_mulhu (x y) : ucoe x * ucoe y = ofwords (mulhu x y) (x * y) := sorry
+lemma mul_mulhu (x y) : ucoe x * ucoe y = ofwords (mulhu x y) (x * y) := sorry'
 
 lemma decompose_mul (xh xl yh yl) : ofwords xh xl * ofwords yh yl =
-  ofwords (mulhu xl yl + xl * yh + xh * yl) (xl * yl) := sorry
+  ofwords (mulhu xl yl + xl * yh + xh * yl) (xl * yl) := sorry'
 
 lemma decompose_ltu (xh xl yh yl) :
-  ltu (ofwords xh xl) (ofwords yh yl) ↔ if xh = yh then ltu xl yl else ltu xh yh := sorry
+  ltu (ofwords xh xl) (ofwords yh yl) ↔ if xh = yh then ltu xl yl else ltu xh yh := sorry'
 
 lemma decompose_leu (xh xl yh yl) : ¬ltu (ofwords yh yl) (ofwords xh xl) ↔
-  if xh = yh then ¬ltu yl xl else ltu xh yh := sorry
+  if xh = yh then ¬ltu yl xl else ltu xh yh := sorry'
 
 lemma decompose_lt (xh xl yh yl) :
-  ofwords xh xl < ofwords yh yl ↔ if xh = yh then xl < yl else xh < yh := sorry
+  ofwords xh xl < ofwords yh yl ↔ if xh = yh then xl < yl else xh < yh := sorry'
 
 lemma decompose_le (xh xl yh yl) : ofwords xh xl ≤ ofwords yh yl ↔
-  if xh = yh then xl ≤ yl else xh < yh := sorry
+  if xh = yh then xl ≤ yl else xh < yh := sorry'
 
 lemma bytes_of_int64 (i) :
   (words_of_int 8 (unsigned i) : list byte) =
-  words_of_int 4 (unsigned (loword i)) ++ words_of_int 4 (unsigned (hiword i)) := sorry
+  words_of_int 4 (unsigned (loword i)) ++ words_of_int 4 (unsigned (hiword i)) := sorry'
 
 end int64
 

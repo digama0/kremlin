@@ -195,10 +195,10 @@ by cases chunk; exact dec_trivial
 lemma memory_chunk.Mptr.align : Mptr.align = if archi.ptr64 then 8 else 4 :=
 by delta Mptr; cases archi.ptr64; refl
 
-lemma align_size_chunk_dvd (chunk : memory_chunk) : chunk.align ∣ chunk.size := sorry
+lemma align_size_chunk_dvd (chunk : memory_chunk) : chunk.align ∣ chunk.size := sorry'
 
 lemma align_le_dvd (chunk1 chunk2 : memory_chunk) (h : chunk1.align ≤ chunk2.align) :
-  chunk1.align ∣ chunk2.align := sorry
+  chunk1.align ∣ chunk2.align := sorry'
 
 /- Initialization data for global variables. -/
 
@@ -209,34 +209,52 @@ inductive init_data : Type
 | int64   : int64 → init_data
 | float32 : float32 → init_data
 | float64 : float → init_data
-| space   : ℤ → init_data
+| space   : ℕ → init_data
 | addrof  : ident → ptrofs → init_data  /- address of symbol + offset -/
 
-def init_data_size : init_data → ℤ
-| (init_data.int8 _)     := 1
-| (init_data.int16 _)    := 2
-| (init_data.int32 _)    := 4
-| (init_data.int64 _)    := 8
-| (init_data.float32 _)  := 4
-| (init_data.float64 _)  := 8
-| (init_data.addrof _ _) := if archi.ptr64 then 8 else 4
-| (init_data.space n)    := max n 0
+namespace init_data
 
-def init_data_list_size : list init_data → ℤ
+def size : init_data → ℕ
+| (int8 _)     := 1
+| (int16 _)    := 2
+| (int32 _)    := 4
+| (int64 _)    := 8
+| (float32 _)  := 4
+| (float64 _)  := 8
+| (addrof _ _) := if archi.ptr64 then 8 else 4
+| (space n)    := n
+
+def align : init_data → ℕ
+| (int8 _)     := 1
+| (int16 _)    := 2
+| (int32 _)    := 4
+| (int64 _)    := 8
+| (float32 _)  := 4
+| (float64 _)  := 4
+| (addrof _ _) := if archi.ptr64 then 8 else 4
+| (space _)    := 1
+
+def list_size : list init_data → ℕ
 | [] := 0
-| (i :: il') := init_data_size i + init_data_list_size il'
+| (i :: il') := i.size + list_size il'
 
-lemma init_data_size_pos (i) : init_data_size i ≥ 0 := sorry
+lemma size_pos (i : init_data) : i.size ≥ 0 := sorry'
 
-lemma init_data_list_size_pos (il) : init_data_list_size il ≥ 0 := sorry
+lemma list_size_pos (il) : list_size il ≥ 0 := sorry'
+
+def list_aligned : ℕ → list init_data → Prop
+| p [] := true
+| p (i1 :: il) := i1.align ∣ p ∧ list_aligned (p + i1.size) il
+
+end init_data
 
 /- Information attached to global variables. -/
 
 structure globvar (V : Type) : Type :=
-(gvar_info : V)                    /- language-dependent info, e.g. a type -/
-(gvar_init : list init_data)       /- initialization data -/
-(gvar_readonly : bool)             /- read-only variable? (const) -/
-(gvar_volatile : bool)              /- volatile variable? -/
+(info : V)                    /- language-dependent info, e.g. a type -/
+(init : list init_data)       /- initialization data -/
+(readonly : bool)             /- read-only variable? (const) -/
+(volatile : bool)              /- volatile variable? -/
 
 /- Whole programs consist of:
 - a collection of global definitions (name and description);
@@ -256,39 +274,39 @@ inductive globdef (F V : Type) : Type
 export globdef
 
 structure program (F V : Type) : Type :=
-(prog_defs : list (ident × globdef F V))
-(prog_public : list ident)
-(prog_main : ident)
+(defs : list (ident × globdef F V))
+(public : list ident)
+(main : ident)
 
-def prog_defs_names {F V : Type} (p : program F V) : list ident :=
-p.prog_defs.map prod.fst
+def program.defs_names {F V : Type} (p : program F V) : list ident :=
+p.defs.map prod.fst
 
 /- The "definition map" of a program maps names of globals to their definitions.
-  If several definitions have the same name, the one appearing last in [p.(prog_defs)] wins. -/
+  If several definitions have the same name, the one appearing last in [p.defs] wins. -/
 
 section defmap
 
 variables {F V : Type}
 variable p : program F V
 
-def prog_defmap : PTree.t (globdef F V) :=
-PTree.of_list p.prog_defs
+def prog_defmap : PTree (globdef F V) :=
+PTree.of_list p.defs
 
 lemma in_prog_defmap {id : ident} {g} : (prog_defmap p ^! id) = some g →
-  (id, g) ∈ p.prog_defs := sorry
+  (id, g) ∈ p.defs := sorry'
 
-lemma prog_defmap_dom {id : ident} : id ∈ prog_defs_names p →
-  ∃ g, (prog_defmap p^!id) = some g := sorry
+lemma prog_defmap_dom {id : ident} : id ∈ p.defs_names →
+  ∃ g, (prog_defmap p^!id) = some g := sorry'
 
 lemma prog_defmap_unique (defs1 id g defs2) :
-  p.prog_defs = defs1 ++ (id, g) :: defs2 →
+  p.defs = defs1 ++ (id, g) :: defs2 →
   id ∉ defs2.map prod.fst →
-  (prog_defmap p^!id) = some g := sorry
+  (prog_defmap p^!id) = some g := sorry'
 
 lemma prog_defmap_nodup {id : ident} {g} :
-  (prog_defs_names p).nodup →
-  (id, g) ∈ p.prog_defs →
-  (prog_defmap p ^! id) = some g := sorry
+  p.defs_names.nodup →
+  (id, g) ∈ p.defs →
+  (prog_defmap p ^! id) = some g := sorry'
 
 end defmap
 
@@ -357,7 +375,7 @@ def transform_partial_program {A B V} (transf_fun : A → res B) : program A V �
 transform_partial_program2 (λ i, transf_fun) (λ i, OK)
 
 lemma transform_program_partial_program {A B V} (transf_fun: A → B) (p: program A V) :
-  transform_partial_program (λ f, OK (transf_fun f)) p = OK (transform_program transf_fun p) := sorry
+  transform_partial_program (λ f, OK (transf_fun f)) p = OK (transform_program transf_fun p) := sorry'
 
 /- * External functions -/
 
@@ -515,10 +533,10 @@ def regs_of_rpairs {A} : list (rpair A) → list A
 | (p :: l) := regs_of_rpair p ++ regs_of_rpairs l
 
 lemma in_regs_of_rpair {A} (x : A) (p) (hm : x ∈ regs_of_rpair p) (l : list (rpair A)) (hp : p ∈ l) :
-  x ∈ regs_of_rpairs l := sorry
+  x ∈ regs_of_rpairs l := sorry'
 
 lemma in_regs_of_rpairs_inv {A} (x: A) (l : list (rpair A)) (hm : x ∈ regs_of_rpairs l) :
-  ∃ p, p ∈ l ∧ x ∈ regs_of_rpair p := sorry
+  ∃ p, p ∈ l ∧ x ∈ regs_of_rpair p := sorry'
 
 def forall_rpair {A} (P : A → Prop) : rpair A → Prop
 | (One r) := P r

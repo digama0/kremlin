@@ -40,15 +40,15 @@ inductive init_class : list init_data → Type
 
 def classify_init : Π (i : list init_data), init_class i
 | [] := init_class.extern
-| [init_data.space sz] := init_class.common sz
+| (init_data.space sz :: []) := init_class.common sz
 | i := init_class.definitive i
 
 def link_varinit (i1 i2 : list init_data) :=
 match i1, i2, classify_init i1, classify_init i2 with
 | ._, i2, init_class.extern, _ := some i2
 | i1, ._, _, init_class.extern := some i1
-| ._, i2, init_class.common sz1, _ := if sz1 = init_data_list_size i2 then some i2 else none
-| i1, ._, _, init_class.common sz2 := if sz2 = init_data_list_size i1 then some i1 else none
+| ._, i2, init_class.common sz1, _ := if sz1 = init_data.list_size i2 then some i2 else none
+| i1, ._, _, init_class.common sz2 := if sz2 = init_data.list_size i1 then some i1 else none
 | i1, i2, _, _ := none
 end.
 
@@ -56,30 +56,30 @@ inductive linkorder_varinit : list init_data → list init_data → Prop
 | linkorder_varinit_refl (il) : linkorder_varinit il il
 | linkorder_varinit_extern (il) : linkorder_varinit [] il
 | linkorder_varinit_common {sz il} :
-    il ≠ [] → init_data_list_size il = sz →
+    il ≠ list.nil → init_data.list_size il = sz →
     linkorder_varinit [init_data.space sz] il.
 
 instance Linker_varinit : linker (list init_data) :=
 { link := link_varinit,
   linkorder := linkorder_varinit,
-  linkorder_refl := sorry,
-  linkorder_trans := sorry,
-  link_linkorder := sorry }
+  linkorder_refl := sorry',
+  linkorder_trans := sorry',
+  link_linkorder := sorry' }
 
 /- Linking variable definitions. -/
 
 def link_vardef {V} [linker V] (v1 v2 : globvar V) : option (globvar V) :=
-  match link v1.gvar_info v2.gvar_info with
+  match link v1.info v2.info with
   | none := none
   | some info :=
-      match link v1.gvar_init v2.gvar_init with
+      match link v1.init v2.init with
       | none := none
       | some init :=
-          if v1.gvar_readonly = v2.gvar_readonly ∧
-             v1.gvar_volatile = v2.gvar_volatile
-          then some { gvar_info := info, gvar_init := init,
-                      gvar_readonly := v1.gvar_readonly,
-                      gvar_volatile := v1.gvar_volatile }
+          if v1.readonly = v2.readonly ∧
+             v1.volatile = v2.volatile
+          then some { info := info, init := init,
+                      readonly := v1.readonly,
+                      volatile := v1.volatile }
           else none
       end
   end.
@@ -93,9 +93,9 @@ inductive linkorder_vardef {V} [linker V] : globvar V → globvar V → Prop
 instance Linker_vardef {V} [linker V] : linker (globvar V) :=
 { link := link_vardef,
   linkorder := linkorder_vardef,
-  linkorder_refl := sorry,
-  linkorder_trans := sorry,
-  link_linkorder := sorry }
+  linkorder_refl := sorry',
+  linkorder_trans := sorry',
+  link_linkorder := sorry' }
 
 /- Linking global definitions -/
 
@@ -115,9 +115,9 @@ inductive linkorder_def {F V} [linker F] [linker V] : globdef F V → globdef F 
 instance Linker_def {F V} [linker F] [linker V] : linker (globdef F V) :=
 { link := link_def,
   linkorder := linkorder_def,
-  linkorder_refl := sorry,
-  linkorder_trans := sorry,
-  link_linkorder := sorry }
+  linkorder_refl := sorry',
+  linkorder_trans := sorry',
+  link_linkorder := sorry' }
 
 /- Linking two compilation units.  Compilation units are represented like
   whole programs using the type [program F V].  If a name has
@@ -145,7 +145,7 @@ def dm2 := prog_defmap p2
 def link_prog_check (x : ident) (gd1 : globdef F V) :=
 match dm2^!x with
 | none := tt
-| some gd2 := (x ∈ p1.prog_public) && (x ∈ p2.prog_public) && (link gd1 gd2).is_some
+| some gd2 := (x ∈ p1.public) && (x ∈ p2.public) && (link gd1 gd2).is_some
 end
 
 def link_prog_merge : option (globdef F V) → option (globdef F V) → option (globdef F V)
@@ -154,49 +154,49 @@ def link_prog_merge : option (globdef F V) → option (globdef F V) → option (
 | (some gd1) (some gd2) := link gd1 gd2
 
 def link_prog : option (program F V) :=
-if p1.prog_main = p2.prog_main ∧ PTree.for_all dm1 link_prog_check then
-some { prog_main := p1.prog_main,
-       prog_public := p1.prog_public ++ p2.prog_public,
-       prog_defs := PTree.elements $ PTree.combine link_prog_merge dm1 dm2 }
+if p1.main = p2.main ∧ PTree.for_all dm1 link_prog_check then
+some { main := p1.main,
+       public := p1.public ++ p2.public,
+       defs := PTree.elements $ PTree.combine link_prog_merge dm1 dm2 }
 else none
 
 lemma link_prog_inv (p) (h : link_prog = some p) :
-      p1.prog_main = p2.prog_main
+      p1.main = p2.main
    ∧ (∀ (id : ident) gd1 gd2,
          (dm1^!id) = some gd1 → (dm2^!id) = some gd2 →
-         id ∈ p1.prog_public ∧ id ∈ p2.prog_public ∧ ∃ gd, link gd1 gd2 = some gd)
-  ∧ p = { prog_main := p1.prog_main,
-          prog_public := p1.prog_public ++ p2.prog_public,
-          prog_defs := PTree.elements (PTree.combine link_prog_merge dm1 dm2) } := sorry
+         id ∈ p1.public ∧ id ∈ p2.public ∧ ∃ gd, link gd1 gd2 = some gd)
+  ∧ p = { main := p1.main,
+          public := p1.public ++ p2.public,
+          defs := PTree.elements (PTree.combine link_prog_merge dm1 dm2) } := sorry'
 
-lemma link_prog_succeeds (hp : p1.prog_main = p2.prog_main)
+lemma link_prog_succeeds (hp : p1.main = p2.main)
   (h : ∀ (id : ident) gd1 gd2,
        (dm1^!id) = some gd1 → (dm2^!id) = some gd2 →
-       id ∈ p1.prog_public ∧ id ∈ p2.prog_public ∧ (link gd1 gd2).is_some) :
+       id ∈ p1.public ∧ id ∈ p2.public ∧ (link gd1 gd2).is_some) :
   link_prog = some {
-    prog_main := p1.prog_main,
-    prog_public := p1.prog_public ++ p2.prog_public,
-    prog_defs := PTree.elements (PTree.combine link_prog_merge dm1 dm2) } := sorry
+    main := p1.main,
+    public := p1.public ++ p2.public,
+    defs := PTree.elements (PTree.combine link_prog_merge dm1 dm2) } := sorry'
 
-lemma prog_defmap_elements (m: PTree.t (globdef F V)) (pub mn x) :
-  (prog_defmap ⟨PTree.elements m, pub, mn⟩ ^! x) = (m^!x) := sorry
+lemma prog_defmap_elements (m: PTree (globdef F V)) (pub mn x) :
+  (prog_defmap ⟨PTree.elements m, pub, mn⟩ ^! x) = (m^!x) := sorry'
 end
 
 instance linker_prog : linker (program F V) :=
 { link := link_prog,
-  linkorder := λp1 p2, p1.prog_main = p2.prog_main
-  ∧ p1.prog_public ⊆ p2.prog_public
+  linkorder := λp1 p2, p1.main = p2.main
+  ∧ p1.public ⊆ p2.public
   ∧ ∀ (id : ident) gd1, (prog_defmap p1^!id) = some gd1 →
      ∃ gd2, (prog_defmap p2^!id) = some gd2 ∧
-       linkorder gd1 gd2 ∧ (id ∉ p2.prog_public → gd2 = gd1),
-  linkorder_refl := sorry,
-  linkorder_trans := sorry,
-  link_linkorder := sorry }
+       linkorder gd1 gd2 ∧ (id ∉ p2.public → gd2 = gd1),
+  linkorder_refl := sorry',
+  linkorder_trans := sorry',
+  link_linkorder := sorry' }
 
 lemma prog_defmap_linkorder {p1 p2 : program F V} {id gd1} :
   linkorder p1 p2 →
   (prog_defmap p1^!id) = some gd1 →
-  ∃ gd2, (prog_defmap p2^!id) = some gd2 ∧ linkorder gd1 gd2 := sorry
+  ∃ gd2, (prog_defmap p2^!id) = some gd2 ∧ linkorder gd1 gd2 := sorry'
 
 end linker_prog
 
@@ -237,18 +237,18 @@ def match_ident_globdef (ctx : C) : ident × globdef F1 V1 → ident × globdef 
 | (i1, g1) (i2, g2) := i1 = i2 ∧ match_globdef ctx g1 g2
 
 def match_program_gen (ctx : C) (p1 : program F1 V1) (p2 : program F2 V2) : Prop :=
-list.forall2 (match_ident_globdef ctx) p1.prog_defs p2.prog_defs
-∧ p2.prog_main = p1.prog_main
-∧ p2.prog_public = p1.prog_public
+list.forall2 (match_ident_globdef ctx) p1.defs p2.defs
+∧ p2.main = p1.main
+∧ p2.public = p1.public
 
 theorem match_program_defmap {ctx p1 p2} (hm : match_program_gen ctx p1 p2) (id) :
-  option.rel (match_globdef ctx) (prog_defmap p1^!id) (prog_defmap p2^!id) := sorry
+  option.rel (match_globdef ctx) (prog_defmap p1^!id) (prog_defmap p2^!id) := sorry'
 
 lemma match_program_gen_main {ctx p1 p2} (hm : match_program_gen ctx p1 p2) :
-  p2.prog_main = p1.prog_main := sorry
+  p2.main = p1.main := sorry'
 
 lemma match_program_public {ctx p1 p2} (hm : match_program_gen ctx p1 p2) :
-  p2.prog_public = p1.prog_public := sorry
+  p2.public = p1.public := sorry'
 
 end match_program_generic
 
@@ -265,7 +265,7 @@ lemma match_program_main {F1 V1 F2 V2} [linker F1] [linker V1]
   {match_fundef : program F1 V1 → F1 → F2 → Prop}
   {match_varinfo : V1 → V2 → Prop}
   {p1 : program F1 V1} {p2 : program F2 V2}
-  (hm : match_program match_fundef match_varinfo p1 p2) : p2.prog_main = p1.prog_main :=
+  (hm : match_program match_fundef match_varinfo p1 p2) : p2.main = p1.main :=
 match_program_gen_main _ _ hm
 
 end linking

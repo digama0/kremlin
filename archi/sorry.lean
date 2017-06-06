@@ -10,7 +10,7 @@ def ptr64 : bool := sorry
 def big_endian : bool := sorry
 
 def align_int64 : ℕ := sorry
-def align_float64 ℕ := sorry
+def align_float64 : ℕ := sorry
 
 def splitlong : bool := sorry
 

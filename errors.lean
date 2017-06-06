@@ -1,3 +1,5 @@
+import data.num.basic
+
 namespace errors
 
 inductive errcode : Type

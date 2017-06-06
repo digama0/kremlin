@@ -67,16 +67,16 @@ lemma decode_encode_int (n x) : decode_int (encode_int n x) = x.nat_mod (2^(n * 
 by simp [decode_int, encode_int, rev_if_be_involutive]; refl
 
 lemma decode_encode_int_1 (x : int32) :
-  repr (decode_int (encode_int 1 (unsigned x))) = zero_ext 8 x := sorry
+  repr (decode_int (encode_int 1 (unsigned x))) = zero_ext 8 x := sorry'
 
 lemma decode_encode_int_2 (x : int32) :
-  repr (decode_int (encode_int 2 (unsigned x))) = zero_ext 16 x := sorry
+  repr (decode_int (encode_int 2 (unsigned x))) = zero_ext 16 x := sorry'
 
 lemma decode_encode_int_4 (x : int32) :
-  repr (decode_int (encode_int 4 (unsigned x))) = x := sorry
+  repr (decode_int (encode_int 4 (unsigned x))) = x := sorry'
 
 lemma decode_encode_int_8 (x : int64) :
-  repr (decode_int (encode_int 8 (unsigned x))) = x := sorry
+  repr (decode_int (encode_int 8 (unsigned x))) = x := sorry'
 
 /- A length-[n] encoding depends only on the low [8*n] bits of the integer. -/
 
@@ -112,7 +112,7 @@ begin
   simp [IH], refl
 end
 
-lemma inj_proj_bytes (cl bl) : proj_bytes cl = some bl → cl = inj_bytes bl := sorry
+lemma inj_proj_bytes (cl bl) : proj_bytes cl = some bl → cl = inj_bytes bl := sorry'
 
 def inj_value_rec (v : val) (q : quantity) : ℕ → list memval
 | 0 := []
@@ -168,15 +168,15 @@ match proj_bytes vl, chunk with
 | none,    _              := Vundef
 end
 
-lemma encode_val_length (chunk v) : (encode_val chunk v).length = chunk.size := sorry
+lemma encode_val_length (chunk v) : (encode_val chunk v).length = chunk.size := sorry'
 
-lemma check_inj_value (v q n) : check_value v q n (inj_value_rec v q n) := sorry
+lemma check_inj_value (v q n) : check_value v q n (inj_value_rec v q n) := sorry'
 
-lemma proj_inj_value (q v) : proj_value q (inj_value q v) = v := sorry
+lemma proj_inj_value (q v) : proj_value q (inj_value q v) = v := sorry'
 
-theorem in_inj_value (mv v q) : mv ∈ inj_value q v → ∃ n, mv = Fragment v q n := sorry
+theorem in_inj_value (mv v q) : mv ∈ inj_value q v → ∃ n, mv = Fragment v q n := sorry'
 
-lemma proj_inj_value_mismatch (q1 q2 v) : q1 ≠ q2 → proj_value q1 (inj_value q2 v) = Vundef := sorry
+lemma proj_inj_value_mismatch (q1 q2 v) : q1 ≠ q2 → proj_value q1 (inj_value q2 v) = Vundef := sorry'
 
 def decode_encode_val : val → memory_chunk → memory_chunk → val → Prop
 | (Vundef)      _               _               v2 := v2 = Vundef
@@ -244,37 +244,37 @@ def decode_encode_val : val → memory_chunk → memory_chunk → val → Prop
 | (Vsingle f)   Many64          _               v2 := v2 = Vundef
 | (Vsingle f)   _               _               v2 := true /- nothing interesting to say about v2 -/
 
-theorem decode_val_undef (bl chunk) : decode_val chunk (Undef :: bl) = Vundef := sorry
+theorem decode_val_undef (bl chunk) : decode_val chunk (Undef :: bl) = Vundef := sorry'
 
-theorem proj_bytes_inj_value (q v) : proj_bytes (inj_value q v) = none := sorry
+theorem proj_bytes_inj_value (q v) : proj_bytes (inj_value q v) = none := sorry'
 
 lemma decode_encode_val_general (v chunk1 chunk2) :
-  decode_encode_val v chunk1 chunk2 (decode_val chunk2 (encode_val chunk1 v)) := sorry
+  decode_encode_val v chunk1 chunk2 (decode_val chunk2 (encode_val chunk1 v)) := sorry'
 
 lemma decode_encode_val_similar {v1 chunk1 chunk2 v2} :
   decode_encode_val v1 chunk1 chunk2 v2 →
   chunk1.type = chunk2.type →
   chunk1.size = chunk2.size →
-  v2 = val.load_result chunk2 v1 := sorry
+  v2 = val.load_result chunk2 v1 := sorry'
 
 lemma decode_val_type (chunk cl) :
-  val.has_type (decode_val chunk cl) chunk.type := sorry
+  val.has_type (decode_val chunk cl) chunk.type := sorry'
 
-lemma encode_val_int8_signed_unsigned (v) : encode_val Mint8signed v = encode_val Mint8unsigned v := sorry
+lemma encode_val_int8_signed_unsigned (v) : encode_val Mint8signed v = encode_val Mint8unsigned v := sorry'
 
-lemma encode_val_int16_signed_unsigned (v) : encode_val Mint16signed v = encode_val Mint16unsigned v := sorry
+lemma encode_val_int16_signed_unsigned (v) : encode_val Mint16signed v = encode_val Mint16unsigned v := sorry'
 
 lemma encode_val_int8_zero_ext (n : int32) :
-  encode_val Mint8unsigned (Vint (zero_ext 8 n)) = encode_val Mint8unsigned (Vint n) := sorry
+  encode_val Mint8unsigned (Vint (zero_ext 8 n)) = encode_val Mint8unsigned (Vint n) := sorry'
 
 lemma encode_val_int8_sign_ext (n) :
-  encode_val Mint8signed (Vint (sign_ext W8 n)) = encode_val Mint8signed (Vint n) := sorry
+  encode_val Mint8signed (Vint (sign_ext W8 n)) = encode_val Mint8signed (Vint n) := sorry'
 
 lemma encode_val_int16_zero_ext (n) :
-  encode_val Mint16unsigned (Vint (zero_ext 16 n)) = encode_val Mint16unsigned (Vint n) := sorry
+  encode_val Mint16unsigned (Vint (zero_ext 16 n)) = encode_val Mint16unsigned (Vint n) := sorry'
 
 lemma encode_val_int16_sign_ext (n) :
-  encode_val Mint16signed (Vint (sign_ext W16 n)) = encode_val Mint16signed (Vint n) := sorry
+  encode_val Mint16signed (Vint (sign_ext W16 n)) = encode_val Mint16signed (Vint n) := sorry'
 
 lemma decode_val_cast_type (v : val) : memory_chunk → Prop
 | Mint8signed    := v = val.sign_ext W8 v
@@ -283,7 +283,7 @@ lemma decode_val_cast_type (v : val) : memory_chunk → Prop
 | Mint16unsigned := v = val.zero_ext 16 v
 | _              := true
 
-lemma decode_val_cast (chunk l) : decode_val_cast_type (decode_val chunk l) chunk := sorry
+lemma decode_val_cast (chunk l) : decode_val_cast_type (decode_val chunk l) chunk := sorry'
 
 /- Pointers cannot be forged. -/
 
@@ -311,7 +311,7 @@ inductive shape_encoding (chunk : memory_chunk) (v : val) : list memval → Prop
       (∀ mv ∈ mvl, ∃ b', mv = Byte b') → shape_encoding (Byte b :: mvl)
 | u (mvl) : (∀ mv ∈ mvl, mv = Undef) → shape_encoding (Undef :: mvl)
 
-lemma encode_val_shape (chunk v) : shape_encoding chunk v (encode_val chunk v) := sorry
+lemma encode_val_shape (chunk v) : shape_encoding chunk v (encode_val chunk v) := sorry'
 
 inductive shape_decoding (chunk : memory_chunk) : list memval → val → Prop
 | f (v q i) : ∀ mvl,
@@ -326,7 +326,7 @@ inductive shape_decoding (chunk : memory_chunk) : list memval → val → Prop
 | u (mvl) : shape_decoding mvl Vundef
 
 lemma decode_val_shape (chunk mv1 mvl) :
-  shape_decoding chunk (mv1 :: mvl) (decode_val chunk (mv1 :: mvl)) := sorry
+  shape_decoding chunk (mv1 :: mvl) (decode_val chunk (mv1 :: mvl)) := sorry'
 
 /- * Compatibility with memory injections -/
 
@@ -339,60 +339,60 @@ inductive memval_inject (f : meminj) : memval → memval → Prop
 | undef (mv) : memval_inject Undef mv
 
 lemma memval_inject.incr (f f' v1 v2) :
-  memval_inject f v1 v2 → inject_incr f f' → memval_inject f' v1 v2 := sorry
+  memval_inject f v1 v2 → inject_incr f f' → memval_inject f' v1 v2 := sorry'
 
 /- [decode_val], applied to lists of memory values that are pairwise
   related by [memval_inject], returns values that are related by [inject]. -/
 
 lemma proj_bytes_inject (f vl vl') :
   list.forall2 (memval_inject f) vl vl' →
-  ∀ bl, proj_bytes vl = some bl → proj_bytes vl' = some bl := sorry
+  ∀ bl, proj_bytes vl = some bl → proj_bytes vl' = some bl := sorry'
 
 lemma check_value_inject (f vl vl') :
   list.forall2 (memval_inject f) vl vl' →
   ∀ v v' q n,
   check_value v q n vl →
   inject f v v' → v ≠ Vundef →
-  check_value v' q n vl' := sorry
+  check_value v' q n vl' := sorry'
 
 lemma proj_value_inject (f q vl1 vl2) :
   list.forall2 (memval_inject f) vl1 vl2 →
-  inject f (proj_value q vl1) (proj_value q vl2) := sorry
+  inject f (proj_value q vl1) (proj_value q vl2) := sorry'
 
 lemma proj_bytes_not_inject (f vl vl') :
   list.forall2 (memval_inject f) vl vl' →
-  proj_bytes vl = none → proj_bytes vl' ≠ none → Undef ∈ vl := sorry
+  proj_bytes vl = none → proj_bytes vl' ≠ none → Undef ∈ vl := sorry'
 
 lemma check_value_undef (n q v vl) :
-  Undef ∈ vl → ¬ check_value v q n vl := sorry
+  Undef ∈ vl → ¬ check_value v q n vl := sorry'
 
-lemma proj_value_undef (q vl) : Undef ∈ vl → proj_value q vl = Vundef := sorry
+lemma proj_value_undef (q vl) : Undef ∈ vl → proj_value q vl = Vundef := sorry'
 
 theorem decode_val_inject (f vl1 vl2 chunk) :
   list.forall2 (memval_inject f) vl1 vl2 →
-  inject f (decode_val chunk vl1) (decode_val chunk vl2) := sorry
+  inject f (decode_val chunk vl1) (decode_val chunk vl2) := sorry'
 
 /- Symmetrically, [encode_val], applied to values related by [inject],
   returns lists of memory values that are pairwise
   related by [memval_inject]. -/
 
 lemma inj_bytes_inject (f bl) :
-  list.forall2 (memval_inject f) (inj_bytes bl) (inj_bytes bl) := sorry
+  list.forall2 (memval_inject f) (inj_bytes bl) (inj_bytes bl) := sorry'
 
 lemma repeat_Undef_inject_any (f) (vl : list memval) :
-  list.forall2 (memval_inject f) (list.repeat Undef vl.length) vl := sorry
+  list.forall2 (memval_inject f) (list.repeat Undef vl.length) vl := sorry'
 
 lemma repeat_Undef_inject_encode_val (f) (chunk : memory_chunk) (v) :
-  list.forall2 (memval_inject f) (list.repeat Undef chunk.size) (encode_val chunk v) := sorry
+  list.forall2 (memval_inject f) (list.repeat Undef chunk.size) (encode_val chunk v) := sorry'
 
 lemma repeat_Undef_inject_self (f n) :
-  list.forall2 (memval_inject f) (list.repeat Undef n) (list.repeat Undef n) := sorry
+  list.forall2 (memval_inject f) (list.repeat Undef n) (list.repeat Undef n) := sorry'
 
 lemma inj_value_inject (f v1 v2 q) : inject f v1 v2 →
-  list.forall2 (memval_inject f) (inj_value q v1) (inj_value q v2) := sorry
+  list.forall2 (memval_inject f) (inj_value q v1) (inj_value q v2) := sorry'
 
 theorem encode_val_inject (f v1 v2 chunk) : inject f v1 v2 →
-  list.forall2 (memval_inject f) (encode_val chunk v1) (encode_val chunk v2) := sorry
+  list.forall2 (memval_inject f) (encode_val chunk v1) (encode_val chunk v2) := sorry'
 
 def memval_lessdef : memval → memval → Prop := memval_inject inject_id
 
@@ -403,22 +403,22 @@ by dsimp [memval_lessdef]; cases mv; constructor; apply val_inject_id.2; constru
 
 lemma memval_inject_compose {f f' v1 v2 v3} :
   memval_inject f v1 v2 → memval_inject f' v2 v3 →
-  memval_inject (f.comp f') v1 v3 := sorry
+  memval_inject (f.comp f') v1 v3 := sorry'
 
 /- * Breaking 64-bit memory accesses into two 32-bit accesses -/
 
-lemma length_proj_bytes {l b} : proj_bytes l = some b → b.length = l.length := sorry
+lemma length_proj_bytes {l b} : proj_bytes l = some b → b.length = l.length := sorry'
 
 lemma proj_bytes_append (l2 l1) : proj_bytes (l1 ++ l2) =
-  do b1 ← proj_bytes l1, b2 ← proj_bytes l2, some (b1 ++ b2) := sorry
+  do b1 ← proj_bytes l1, b2 ← proj_bytes l2, some (b1 ++ b2) := sorry'
 
 lemma decode_val_int64 {l1 l2 : list memval} : l1.length = 4 → l2.length = 4 → ¬ archi.ptr64 →
   lessdef (decode_val Mint64 (l1 ++ l2)) (long_of_words
     (decode_val Mint32 (if archi.big_endian then l1 else l2))
-    (decode_val Mint32 (if archi.big_endian then l2 else l1))) := sorry
+    (decode_val Mint32 (if archi.big_endian then l2 else l1))) := sorry'
 
 lemma encode_val_int64 (v) : ¬ archi.ptr64 → encode_val Mint64 v =
      encode_val Mint32 (if archi.big_endian then hiword v else loword v)
-  ++ encode_val Mint32 (if archi.big_endian then loword v else hiword v) := sorry
+  ++ encode_val Mint32 (if archi.big_endian then loword v else hiword v) := sorry'
 
 end memdata

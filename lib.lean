@@ -178,4 +178,4 @@ def swap_comparison : comparison → comparison
 | Cgt := Clt
 | Cge := Cle
 
-
+def {u} sorry' {α : Sort u} : α := sorry
