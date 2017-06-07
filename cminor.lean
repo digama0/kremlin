@@ -1,7 +1,7 @@
 import .integers .lib .ast .globalenvs
 
 namespace cminor
-open integers ast floats maps values
+open integers ast floats maps values memory
 
 /- Abstract syntax and semantics for the Cminor language. -/
 
@@ -12,12 +12,13 @@ open integers ast floats maps values
   and operators that occur within expressions. -/
 
 inductive const : Type
-| Ointconst    : int → const          /- integer const -/
+| Ointconst    : int32 → const        /- integer const -/
 | Ofloatconst  : float → const        /- double-precision floating-point const -/
 | Osingleconst : float32 → const      /- single-precision floating-point const -/
 | Olongconst   : int64 → const        /- long integer const -/
 | Oaddrsymbol  : ident → ptrofs → const /- address of the symbol plus the offset -/
 | Oaddrstack   : ptrofs → const       /- stack pointer plus the given offset -/
+open const
 
 inductive unary_operation : Type
 | Ocast8unsigned  : unary_operation   /- 8-bit zero extension  -/
@@ -96,16 +97,18 @@ inductive binary_operation : Type
 | Ocmpfs : comparison → binary_operation /- float32 comparison -/
 | Ocmpl  : comparison → binary_operation /- long signed comparison -/
 | Ocmplu : comparison → binary_operation /- long unsigned comparison -/
+open binary_operation
 
 /- Expressions include reading local variables, constants,
   arithmetic operations, and memory loads. -/
 
 inductive expr : Type
-| Evar : ident → expr
+| Evar   : ident → expr
 | Econst : const → expr
-| Eunop : unary_operation → expr → expr
+| Eunop  : unary_operation → expr → expr
 | Ebinop : binary_operation → expr → expr → expr
-| Eload : memory_chunk → expr → expr
+| Eload  : memory_chunk → expr → expr
+open cminor.expr
 
 /- Statements include expression evaluation, assignment to local variables,
   memory stores, function calls, an if/then/else conditional, infinite
@@ -131,6 +134,7 @@ inductive stmt : Type
 | Sreturn     : option expr → stmt
 | Slabel      : label → stmt → stmt
 | Sgoto       : label → stmt
+open stmt
 
 /- Functions are composed of a signature, a list of parameter names,
   a list of local variables, and a  statement representing
@@ -167,156 +171,146 @@ def env := PTree val
   function entry, binding parameters to the provided arguments and
   initializing local variables to [Vundef]. -/
 
-def set_params : list val → list ident → env
-| _  []         := (∅ : PTree _)
-| vs (i1 :: is) := PTree.set i1 vs.head (set_params vs.tail is)
+def set_params : list ident → list val → env
+| []         _  := (∅ : PTree _)
+| (i1 :: is) vs := (set_params is vs.tail).set i1 vs.head
 
-def set_locals (il : list ident) (e : env) {struct il} : env :=
-  match il with
-| nil := e
-| i1 :: is := PTree.set i1 Vundef (set_locals is e)
-  end
+def set_locals (e : env) : list ident → env
+| [] := e
+| (i1 :: is) := (set_locals is).set i1 Vundef
 
-def set_optvar (optid : option ident) (v : val) (e : env) : env :=
-  match optid with
-| none := e
-| some id := PTree.set id v e
-  end
+def set_optvar (e : env) : option ident → val → env
+| none      v := e
+| (some id) v := e.set id v
 
 /- Continuations -/
 
-inductive cont : Type :=
+inductive cont : Type
 | Kstop : cont                         /- stop program execution -/
-| Kseq : stmt → cont → cont          /- execute stmt, then cont -/
-| Kblock : cont → cont                /- exit a block, then do cont -/
+| Kseq : stmt → cont → cont            /- execute stmt, then cont -/
+| Kblock : cont → cont                 /- exit a block, then do cont -/
 | Kcall : option ident → function → val → env → cont → cont
-                                        /- return to caller -/
+                                       /- return to caller -/
+open cont
 
 /- States -/
 
-inductive state : Type :=
-| State :                      /- Execution within a function -/
-      ∀ (f : function)              /- currently executing function  -/
-             (s : stmt)                  /- statement under consideration -/
-             (k : cont)                  /- its continuation -- what to do next -/
-             (sp : val)                  /- current stack pointer -/
-             (e : env)                   /- current local environment -/
-             (m : mem),                  /- current memory state -/
-      state
-| Callstate :                  /- Invocation of a function -/
-      ∀ (f : fundef)                /- function to invoke -/
-             (args : list val)           /- arguments provided by caller -/
-             (k : cont)                  /- what to do next  -/
-             (m : mem),                  /- memory state -/
-      state
-| Returnstate :                /- Return from a function -/
-      ∀ (v : val)                   /- Return value -/
-             (k : cont)                  /- what to do next -/
-             (m : mem),                  /- memory state -/
-      state
+inductive state : Type
+| State                       /- Execution within a function -/
+  (f : function)              /- currently executing function  -/
+  (s : stmt)                  /- statement under consideration -/
+  (k : cont)                  /- its continuation -- what to do next -/
+  (sp : val)                  /- current stack pointer -/
+  (e : env)                   /- current local environment -/
+  (m : mem)                   /- current memory state -/
+  : state
+| Callstate                   /- Invocation of a function -/
+  (f : fundef)                /- function to invoke -/
+  (args : list val)           /- arguments provided by caller -/
+  (k : cont)                  /- what to do next  -/
+  (m : mem)                   /- memory state -/
+  : state
+| Returnstate                 /- Return from a function -/
+  (v : val)                   /- Return value -/
+  (k : cont)                  /- what to do next -/
+  (m : mem)                   /- memory state -/
+  : state
 
-section RELSEM
+section relsem
 
-parameter ge : genv
+parameter (ge : genv)
 
 /- Evaluation of constants and operator applications.
     [None] is returned when the computation is undefined, e.g.
     if arguments are of the wrong types, or in case of an integer division
     by zero. -/
 
-def eval_constant (sp : val) (cst : constant) : option val :=
-  match cst with
-| Ointconst n := some (Vint n)
-| Ofloatconst n := some (Vfloat n)
-| Osingleconst n := some (Vsingle n)
-| Olongconst n := some (Vlong n)
-| Oaddrsymbol s ofs := some (Genv.symbol_address ge s ofs)
-| Oaddrstack ofs := some (Val.offset_ptr sp ofs)
-  end
+def eval_const (sp : val) : const → val
+| (Ointconst n)       := Vint n
+| (Ofloatconst n)     := Vfloat n
+| (Osingleconst n)    := Vsingle n
+| (Olongconst n)      := Vlong n
+| (Oaddrsymbol s ofs) := ge.symbol_address s ofs
+| (Oaddrstack ofs)    := offset_ptr sp ofs
 
-def eval_unop (op : unary_operation) (arg : val) : option val :=
-  match op with
-| Ocast8unsigned := some (Val.zero_ext 8 arg)
-| Ocast8signed := some (Val.sign_ext 8 arg)
-| Ocast16unsigned := some (Val.zero_ext 16 arg)
-| Ocast16signed := some (Val.sign_ext 16 arg)
-| Onegint := some (Val.negint arg)
-| Onotint := some (Val.notint arg)
-| Onegf := some (Val.negf arg)
-| Oabsf := some (Val.absf arg)
-| Onegfs := some (Val.negfs arg)
-| Oabsfs := some (Val.absfs arg)
-| Osingleoffloat := some (Val.singleoffloat arg)
-| Ofloatofsingle := some (Val.floatofsingle arg)
-| Ointoffloat := Val.intoffloat arg
-| Ointuoffloat := Val.intuoffloat arg
-| Ofloatofint := Val.floatofint arg
-| Ofloatofintu := Val.floatofintu arg
-| Ointofsingle := Val.intofsingle arg
-| Ointuofsingle := Val.intuofsingle arg
-| Osingleofint := Val.singleofint arg
-| Osingleofintu := Val.singleofintu arg
-| Onegl := some (Val.negl arg)
-| Onotl := some (Val.notl arg)
-| Ointoflong := some (Val.loword arg)
-| Olongofint := some (Val.longofint arg)
-| Olongofintu := some (Val.longofintu arg)
-| Olongoffloat := Val.longoffloat arg
-| Olonguoffloat := Val.longuoffloat arg
-| Ofloatoflong := Val.floatoflong arg
-| Ofloatoflongu := Val.floatoflongu arg
-| Olongofsingle := Val.longofsingle arg
-| Olonguofsingle := Val.longuofsingle arg
-| Osingleoflong := Val.singleoflong arg
-| Osingleoflongu := Val.singleoflongu arg
-  end
+def eval_unop (arg : val) : unary_operation → option val
+| Ocast8unsigned  := some (zero_ext 8 arg)
+| Ocast8signed    := some (sign_ext 8 arg)
+| Ocast16unsigned := some (zero_ext 16 arg)
+| Ocast16signed   := some (sign_ext 16 arg)
+| Onegint         := some (negint arg)
+| Onotint         := some (notint arg)
+| Onegf           := some (negf arg)
+| Oabsf           := some (absf arg)
+| Onegfs          := some (negfs arg)
+| Oabsfs          := some (absfs arg)
+| Osingleoffloat  := some (single_of_float arg)
+| Ofloatofsingle  := some (float_of_single arg)
+| Ointoffloat     := int_of_float arg
+| Ointuoffloat    := intu_of_float arg
+| Ofloatofint     := float_of_int arg
+| Ofloatofintu    := float_of_intu arg
+| Ointofsingle    := int_of_single arg
+| Ointuofsingle   := intu_of_single arg
+| Osingleofint    := single_of_int arg
+| Osingleofintu   := single_of_intu arg
+| Onegl           := some (negl arg)
+| Onotl           := some (notl arg)
+| Ointoflong      := some (loword arg)
+| Olongofint      := some (long_of_int arg)
+| Olongofintu     := some (long_of_intu arg)
+| Olongoffloat    := long_of_float arg
+| Olonguoffloat   := longu_of_float arg
+| Ofloatoflong    := float_of_long arg
+| Ofloatoflongu   := float_of_longu arg
+| Olongofsingle   := long_of_single arg
+| Olonguofsingle  := longu_of_single arg
+| Osingleoflong   := single_of_long arg
+| Osingleoflongu  := single_of_longu arg
 
-def eval_binop
-            (op : binary_operation) (arg1 arg2 : val) (m : mem) : option val :=
-  match op with
-| Oadd := some (Val.add arg1 arg2)
-| Osub := some (Val.sub arg1 arg2)
-| Omul := some (Val.mul arg1 arg2)
-| Odiv := Val.divs arg1 arg2
-| Odivu := Val.divu arg1 arg2
-| Omod := Val.mods arg1 arg2
-| Omodu := Val.modu arg1 arg2
-| Oand := some (Val.and arg1 arg2)
-| Oor := some (Val.or arg1 arg2)
-| Oxor := some (Val.xor arg1 arg2)
-| Oshl := some (Val.shl arg1 arg2)
-| Oshr := some (Val.shr arg1 arg2)
-| Oshru := some (Val.shru arg1 arg2)
-| Oaddf := some (Val.addf arg1 arg2)
-| Osubf := some (Val.subf arg1 arg2)
-| Omulf := some (Val.mulf arg1 arg2)
-| Odivf := some (Val.divf arg1 arg2)
-| Oaddfs := some (Val.addfs arg1 arg2)
-| Osubfs := some (Val.subfs arg1 arg2)
-| Omulfs := some (Val.mulfs arg1 arg2)
-| Odivfs := some (Val.divfs arg1 arg2)
-| Oaddl := some (Val.addl arg1 arg2)
-| Osubl := some (Val.subl arg1 arg2)
-| Omull := some (Val.mull arg1 arg2)
-| Odivl := Val.divls arg1 arg2
-| Odivlu := Val.divlu arg1 arg2
-| Omodl := Val.modls arg1 arg2
-| Omodlu := Val.modlu arg1 arg2
-| Oandl := some (Val.andl arg1 arg2)
-| Oorl := some (Val.orl arg1 arg2)
-| Oxorl := some (Val.xorl arg1 arg2)
-| Oshll := some (Val.shll arg1 arg2)
-| Oshrl := some (Val.shrl arg1 arg2)
-| Oshrlu := some (Val.shrlu arg1 arg2)
-| Ocmp c := some (Val.cmp c arg1 arg2)
-| Ocmpu c := some (Val.cmpu (Mem.valid_pointer m) c arg1 arg2)
-| Ocmpf c := some (Val.cmpf c arg1 arg2)
-| Ocmpfs c := some (Val.cmpfs c arg1 arg2)
-| Ocmpl c := Val.cmpl c arg1 arg2
-| Ocmplu c := Val.cmplu (Mem.valid_pointer m) c arg1 arg2
-  end
+def eval_binop (arg1 arg2 : val) (m : mem) : binary_operation → option val
+| Oadd       := some (arg1 + arg2)
+| Osub       := some (arg1 - arg2)
+| Omul       := some (arg1 * arg2)
+| Odiv       := divs arg1 arg2
+| Odivu      := divu arg1 arg2
+| Omod       := mods arg1 arg2
+| Omodu      := modu arg1 arg2
+| Oand       := some (val.and arg1 arg2)
+| Oor        := some (val.or arg1 arg2)
+| Oxor       := some (val.xor arg1 arg2)
+| Oshl       := some (shl arg1 arg2)
+| Oshr       := some (shr arg1 arg2)
+| Oshru      := some (shru arg1 arg2)
+| Oaddf      := some (addf arg1 arg2)
+| Osubf      := some (subf arg1 arg2)
+| Omulf      := some (mulf arg1 arg2)
+| Odivf      := some (divf arg1 arg2)
+| Oaddfs     := some (addfs arg1 arg2)
+| Osubfs     := some (subfs arg1 arg2)
+| Omulfs     := some (mulfs arg1 arg2)
+| Odivfs     := some (divfs arg1 arg2)
+| Oaddl      := some (addl arg1 arg2)
+| Osubl      := some (subl arg1 arg2)
+| Omull      := some (mull arg1 arg2)
+| Odivl      := divls arg1 arg2
+| Odivlu     := divlu arg1 arg2
+| Omodl      := modls arg1 arg2
+| Omodlu     := modlu arg1 arg2
+| Oandl      := some (andl arg1 arg2)
+| Oorl       := some (orl arg1 arg2)
+| Oxorl      := some (xorl arg1 arg2)
+| Oshll      := some (shll arg1 arg2)
+| Oshrl      := some (shrl arg1 arg2)
+| Oshrlu     := some (shrlu arg1 arg2)
+| (Ocmp c)   := some (cmp c arg1 arg2)
+| (Ocmpu c)  := some (cmpu (valid_pointer m) c arg1 arg2)
+| (Ocmpf c)  := some (cmpf c arg1 arg2)
+| (Ocmpfs c) := some (cmpfs c arg1 arg2)
+| (Ocmpl c)  := cmpl c arg1 arg2
+| (Ocmplu c) := cmplu (valid_pointer m) c arg1 arg2
 
-/- Evaluation of an expression: [eval_expr ge sp e m a v]
+/- Evaluation of an expression: [eval_expr ge sp e m a = some v]
   states that expression [a] evaluates to value [v].
   [ge] is the global environment, [e] the local environment,
   and [m] the current memory state.  They are unchanged during evaluation.
@@ -324,82 +318,44 @@ def eval_binop
   (stack frame).
 -/
 
-section EVAL_EXPR
+section eval_expr
 
-parameter sp : val
-parameter e : env
-parameter m : mem
+parameters (sp : val) (e : env) (m : mem)
 
-inductive eval_expr : expr → val → Prop :=
-| eval_Evar : ∀ id v,
-      PTree.get id e = some v →
-      eval_expr (Evar id) v
-| eval_Econst : ∀ cst v,
-      eval_constant sp cst = some v →
-      eval_expr (Econst cst) v
-| eval_Eunop : ∀ op a1 v1 v,
-      eval_expr a1 v1 →
-      eval_unop op v1 = some v →
-      eval_expr (Eunop op a1) v
-| eval_Ebinop : ∀ op a1 a2 v1 v2 v,
-      eval_expr a1 v1 →
-      eval_expr a2 v2 →
-      eval_binop op v1 v2 m = some v →
-      eval_expr (Ebinop op a1 a2) v
-| eval_Eload : ∀ chunk addr vaddr v,
-      eval_expr addr vaddr →
-      Mem.loadv chunk m vaddr = some v →
-      eval_expr (Eload chunk addr) v
+def eval_expr : expr → option val
+| (Evar id)          := PTree.get id e
+| (Econst cst)       := eval_const sp cst
+| (Eunop op a1)      := do v1 ← eval_expr a1, eval_unop v1 op
+| (Ebinop op a1 a2)  := do v1 ← eval_expr a1, v2 ← eval_expr a2, eval_binop v1 v2 m op
+| (Eload chunk addr) := do vaddr ← eval_expr addr, loadv chunk m vaddr
 
-inductive eval_exprlist : list expr → list val → Prop :=
-| eval_Enil :
-      eval_exprlist nil nil
-| eval_Econs : ∀ a1 al v1 vl,
-      eval_expr a1 v1 → eval_exprlist al vl →
-      eval_exprlist (a1 :: al) (v1 :: vl)
+def eval_exprlist : list expr → list val → Prop :=
+list.forall2 (λa v, eval_expr a = some v)
 
-end EVAL_EXPR
+end eval_expr
 
 /- Pop continuation until a call or stop -/
 
-def call_cont (k : cont) : cont :=
-  match k with
-| Kseq s k := call_cont k
-| Kblock k := call_cont k
-| _ := k
-  end
+def call_cont : cont → cont
+| (Kseq s k) := call_cont k
+| (Kblock k) := call_cont k
+| k := k
 
-def is_call_cont (k : cont) : Prop :=
-  match k with
-| Kstop := true
-| Kcall _ _ _ _ _ := true
-| _ := false
-  end
+def is_call_cont : cont → bool
+| Kstop             := tt
+| (Kcall _ _ _ _ _) := tt
+| _ := ff
 
 /- Find the statement and manufacture the continuation
   corresponding to a label -/
 
-def find_label (lbl : label) (s : stmt) (k : cont)
-                    {struct s} : option (stmt * cont) :=
-  match s with
-| Sseq s1 s2 :=
-      match find_label lbl s1 (Kseq s2 k) with
-      | some sk := some sk
-      | none := find_label lbl s2 k
-      end
-| Sifthenelse a s1 s2 :=
-      match find_label lbl s1 k with
-      | some sk := some sk
-      | none := find_label lbl s2 k
-      end
-| Sloop s1 :=
-      find_label lbl s1 (Kseq (Sloop s1) k)
-| Sblock s1 :=
-      find_label lbl s1 (Kblock k)
-| Slabel lbl' s' :=
-      if ident_eq lbl lbl' then some(s', k) else find_label lbl s' k
-| _ := none
-  end
+def find_label (lbl : label) : stmt → cont → option (stmt × cont)
+| (Sseq s1 s2)          k := find_label s1 (Kseq s2 k) <|> find_label s2 k
+| (Sifthenelse a s1 s2) k := find_label s1 k <|> find_label s2 k
+| (Sloop s1)            k := find_label s1 (Kseq (Sloop s1) k)
+| (Sblock s1)           k := find_label s1 (Kblock k)
+| (Slabel lbl' s')      k := if lbl = lbl' then some (s', k) else find_label s' k
+| _                     k := none
 
 /- One step of execution -/
 

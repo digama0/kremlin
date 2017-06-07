@@ -164,7 +164,7 @@ def memory_chunk.size : memory_chunk → ℕ
 lemma memory_chunk.size_pos (chunk) : memory_chunk.size chunk > 0 :=
 by cases chunk; exact dec_trivial
 
-lemma memory_chunk.Mptr.size : Mptr.size = if archi.ptr64 then 8 else 4 :=
+lemma memory_chunk.Mptr.size_eq : Mptr.size = if archi.ptr64 then 8 else 4 :=
 by delta Mptr; cases archi.ptr64; refl
 
 /- Memory reads and writes must respect alignment constraints:
@@ -374,7 +374,7 @@ end transf_program_gen
 def transform_partial_program {A B V} (transf_fun : A → res B) : program A V → res (program B V) :=
 transform_partial_program2 (λ i, transf_fun) (λ i, OK)
 
-lemma transform_program_partial_program {A B V} (transf_fun: A → B) (p: program A V) :
+lemma transform_program_partial_program {A B V} (transf_fun : A → B) (p : program A V) :
   transform_partial_program (λ f, OK (transf_fun f)) p = OK (transform_program transf_fun p) := sorry'
 
 /- * External functions -/
@@ -386,21 +386,21 @@ lemma transform_program_partial_program {A B V} (transf_fun: A → B) (p: progra
   and associated operations. -/
 
 inductive external_function : Type
-| EF_external (name: string) (sg: signature)
+| EF_external (name : string) (sg : signature)
    /- A system call or library function.  Produces an event
        in the trace. -/
-| EF_builtin (name: string) (sg: signature)
+| EF_builtin (name : string) (sg : signature)
    /- A compiler built-in function.  Behaves like an external, but
        can be inlined by the compiler. -/
-| EF_runtime (name: string) (sg: signature)
+| EF_runtime (name : string) (sg : signature)
    /- A function from the run-time library.  Behaves like an
        external, but must not be redefined. -/
-| EF_vload (chunk: memory_chunk)
+| EF_vload (chunk : memory_chunk)
    /- A volatile read operation.  If the adress given as first argument
        points within a volatile global variable, generate an
        event and return the value found in this event.  Otherwise,
        produce no event and behave like a regular memory load. -/
-| EF_vstore (chunk: memory_chunk)
+| EF_vstore (chunk : memory_chunk)
    /- A volatile store operation.   If the adress given as first argument
        points within a volatile global variable, generate an event.
        Otherwise, produce no event and behave like a regular memory store. -/
@@ -413,27 +413,27 @@ inductive external_function : Type
        allocated by an [EF_malloc] external call and frees the
        corresponding block.
        Produces no observable event. -/
-| EF_memcpy (sz: ℤ) (al: ℤ)
+| EF_memcpy (sz al : ℕ)
    /- Block copy, of [sz] bytes, between addresses that are [al]-aligned. -/
-| EF_annot (text: string) (targs: list typ)
+| EF_annot (text : string) (targs : list typ)
    /- A programmer-supplied annotation.  Takes zero, one or several arguments,
        produces an event carrying the text and the values of these arguments,
        and returns no value. -/
-| EF_annot_val (text: string) (targ: typ)
+| EF_annot_val (text : string) (targ : typ)
    /- Another form of annotation that takes one argument, produces
        an event carrying the text and the value of this argument,
        and returns the value of the argument. -/
-| EF_inline_asm (text: string) (sg: signature) (clobbers: list string)
+| EF_inline_asm (text : string) (sg : signature) (clobbers : list string)
    /- Inline [asm] statements.  Semantically, treated like an
        annotation with no parameters ([EF_annot text nil]).  To be
        used with caution, as it can invalidate the semantic
        preservation theorem.  Generated only if [-finline-asm] is
        given. -/
-| EF_debug (kind: pos_num) (text: ident) (targs: list typ)
+| EF_debug (kind : pos_num) (text : ident) (targs : list typ)
    /- Transport debugging information from the front-end to the generated
        assembly.  Takes zero, one or several arguments like [EF_annot].
        Unlike [EF_annot], produces no observable event. -/
-open external_function
+export external_function
 
 /- The type signature of an external function. -/
 
@@ -520,7 +520,7 @@ def typ_rpair {A} (typ_of : A → typ) : rpair A → typ
 | (One r) := typ_of r
 | (Twolong rhi rlo) := Tlong
 
-def map_rpair {A B} (f: A → B) : rpair A → rpair B
+def map_rpair {A B} (f : A → B) : rpair A → rpair B
 | (One r) := One (f r)
 | (Twolong rhi rlo) := Twolong (f rhi) (f rlo)
 
@@ -535,7 +535,7 @@ def regs_of_rpairs {A} : list (rpair A) → list A
 lemma in_regs_of_rpair {A} (x : A) (p) (hm : x ∈ regs_of_rpair p) (l : list (rpair A)) (hp : p ∈ l) :
   x ∈ regs_of_rpairs l := sorry'
 
-lemma in_regs_of_rpairs_inv {A} (x: A) (l : list (rpair A)) (hm : x ∈ regs_of_rpairs l) :
+lemma in_regs_of_rpairs_inv {A} (x : A) (l : list (rpair A)) (hm : x ∈ regs_of_rpairs l) :
   ∃ p, p ∈ l ∧ x ∈ regs_of_rpair p := sorry'
 
 def forall_rpair {A} (P : A → Prop) : rpair A → Prop
@@ -546,7 +546,7 @@ def forall_rpair {A} (P : A → Prop) : rpair A → Prop
 
 inductive builtin_arg (A : Type) : Type
 | BA            {} (x : A)                                            : builtin_arg
-| BA_int        {} (n : int)                                          : builtin_arg
+| BA_int        {} (n : int32)                                        : builtin_arg
 | BA_long       {} (n : int64)                                        : builtin_arg
 | BA_float      {} (f : float)                                        : builtin_arg
 | BA_single     {} (f : float32)                                      : builtin_arg
