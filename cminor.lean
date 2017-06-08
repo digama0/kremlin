@@ -1,7 +1,8 @@
-import .events
+import .events .switch
 
 namespace cminor
-open integers ast floats maps values memory events globalenvs
+open integers ast floats maps values memory events globalenvs switch
+     ast.fundef
 
 /- Abstract syntax and semantics for the Cminor language. -/
 
@@ -331,9 +332,6 @@ def eval_expr : expr → option val
 | (Ebinop op a1 a2)  := do v1 ← eval_expr a1, v2 ← eval_expr a2, eval_binop v1 v2 m op
 | (Eload chunk addr) := do vaddr ← eval_expr addr, loadv chunk m vaddr
 
-def eval_exprlist : list expr → list val → Prop :=
-list.forall2 (λa v, eval_expr a = some v)
-
 end eval_expr
 
 /- Pop continuation until a call or stop -/
@@ -388,21 +386,21 @@ inductive step : state → list event → state → Prop
 
 | step_call (f optid a bl k sp e m vf vargs fd) :
   eval_expr sp e m a = some vf →
-  eval_exprlist sp e m bl vargs →
+  mmap (eval_expr sp e m) bl = some vargs →
   ge.find_funct vf = some fd →
   step (State f (Scall optid (funsig fd) a bl) k sp e m)
     [] (Callstate fd vargs (Kcall optid f sp e k) m)
 
 | step_tailcall (f : function) (a bl k sp e m vf vargs fd m') :
   eval_expr (Vptr sp 0) e m a = some vf →
-  eval_exprlist (Vptr sp 0) e m bl vargs →
+  mmap (eval_expr (Vptr sp 0) e m) bl = some vargs →
   ge.find_funct vf = some fd →
   free m sp 0 f.stackspace = some m' →
   step (State f (Stailcall (funsig fd) a bl) k (Vptr sp 0) e m)
     [] (Callstate fd vargs (call_cont k) m')
 
 | step_builtin (f optid ef bl k sp e m vargs t vres m') :
-  eval_exprlist sp e m bl vargs →
+  mmap (eval_expr sp e m) bl = some vargs →
   external_call ef ge vargs m t vres m' →
   step (State f (Sbuiltin optid ef bl) k sp e m)
      t (State f Sskip k sp (set_optvar e optid vres) m')
@@ -434,89 +432,64 @@ inductive step : state → list event → state → Prop
   step (State f (Sexit (n + 1)) (Kblock k) sp e m)
     [] (State f (Sexit n) k sp e m)
 
-| step_switch (f islong a cases default k sp e m v n) :
+| step_switch (f islong a cases default k sp e m v w n) :
   eval_expr sp e m a = some v →
-  switch_argument islong v n →
+  switch_argument islong v w n →
   step (State f (Sswitch islong a cases default) k sp e m)
-    [] (State f (Sexit (switch_target n default cases)) k sp e m)
+    [] (State f (Sexit (switch_target' w n default cases)) k sp e m)
 
-| step_return_0 : ∀ f k sp e m m',
-  Mem.free m sp 0 f.(fn_stackspace) = some m' →
-  step (State f (Sreturn none) k (Vptr sp Ptrofs.zero) e m)
+| step_return_0 (f : function) (k sp e m m') :
+  free m sp 0 f.stackspace = some m' →
+  step (State f (Sreturn none) k (Vptr sp 0) e m)
     [] (Returnstate Vundef (call_cont k) m')
-| step_return_1 : ∀ f a k sp e m v m',
-  eval_expr (Vptr sp Ptrofs.zero) e m a v →
-  Mem.free m sp 0 f.(fn_stackspace) = some m' →
-  step (State f (Sreturn (some a)) k (Vptr sp Ptrofs.zero) e m)
+| step_return_1 (f : function) (a k sp e m v m') :
+  eval_expr (Vptr sp 0) e m a = some v →
+  free m sp 0 f.stackspace = some m' →
+  step (State f (Sreturn (some a)) k (Vptr sp 0) e m)
     [] (Returnstate v (call_cont k) m')
 
-| step_label : ∀ f lbl s k sp e m,
+| step_label (f lbl s k sp e m) :
   step (State f (Slabel lbl s) k sp e m)
     [] (State f s k sp e m)
 
-| step_goto : ∀ f lbl k sp e m s' k',
-  find_label lbl f.(fn_body) (call_cont k) = some(s', k') →
+| step_goto (f : function) (lbl k sp e m s' k') :
+  find_label lbl f.body (call_cont k) = some (s', k') →
   step (State f (Sgoto lbl) k sp e m)
     [] (State f s' k' sp e m)
 
-| step_internal_function : ∀ f vargs k m m' sp e,
-  Mem.alloc m 0 f.(fn_stackspace) = (m', sp) →
-  set_locals f.(fn_vars) (set_params vargs f.(fn_params)) = e →
+| step_internal_function (f : function) (vargs k) (m : mem) :
   step (Callstate (Internal f) vargs k m)
-    [] (State f f.(fn_body) k (Vptr sp Ptrofs.zero) e m')
-| step_external_function : ∀ ef vargs k m t vres m',
+    [] (State f f.body k (Vptr m.nextblock 0)
+         (set_locals (set_params f.params vargs) f.vars)
+         (m.alloc 0 f.stackspace))
+| step_external_function (ef vargs k m t vres m') :
   external_call ef ge vargs m t vres m' →
   step (Callstate (External ef) vargs k m)
-      t (Returnstate vres k m')
+     t (Returnstate vres k m')
 
-| step_return : ∀ v optid f sp e k m,
+| step_return (v optid f sp e k m) :
   step (Returnstate v (Kcall optid f sp e k) m)
-    [] (State f Sskip k sp (set_optvar optid v e) m)
+    [] (State f Sskip k sp (set_optvar e optid v) m)
 
-end RELSEM
+end relsem
 
 /- Execution of whole programs are described as sequences of transitions
   from an initial state to a final state.  An initial state is a [Callstate]
   corresponding to the invocation of the ``main'' function of the program
   without arguments and with an empty continuation. -/
 
-inductive initial_state (p : program) : state → Prop :=
-| initial_state_intro : ∀ b f m0,
-      let ge := Genv.globalenv p in
-      Genv.init_mem p = some m0 →
-      Genv.find_symbol ge p.(prog_main) = some b →
-      Genv.find_funct_ptr ge b = some f →
-      funsig f = signature_main →
-      initial_state p (Callstate f nil Kstop m0)
+inductive initial_state (p : program) : state → Prop
+| mk (b f m0) :
+  genv.init_mem p = some m0 →
+  genv.find_symbol (genv.globalenv p) p.main = some b →
+  genv.find_funct_ptr (genv.globalenv p) b = some f →
+  funsig f = signature_main →
+  initial_state (Callstate f [] Kstop m0)
 
 /- A final state is a [Returnstate] with an empty continuation. -/
 
-inductive final_state : state → int32 → Prop :=
-| final_state_intro : ∀ r m,
-      final_state (Returnstate (Vint r) Kstop m) r
-
-/- The corresponding small-step semantics. -/
-
-def semantics (p : program) :=
-  Semantics step (initial_state p) final_state (Genv.globalenv p)
-
-/- This semantics is receptive to changes in events. -/
-
-lemma semantics_receptive :
-  ∀ (p : program), receptive (semantics p)
-Proof
-  intros. constructor; simpl; intros
-/- receptiveness -/
-  assert (t1 = [] → ∃ s2, step (Genv.globalenv p) s t2 s2)
-    intros. subst. inv H0. ∃ s1; auto
-  inversion H; subst; auto
-  exploit external_call_receptive; eauto. intros [vres2 [m2 EC2]]
-  ∃ (State f Sskip k sp (set_optvar optid vres2 e) m2). econstructor; eauto
-  exploit external_call_receptive; eauto. intros [vres2 [m2 EC2]]
-  ∃ (Returnstate vres2 k m2). econstructor; eauto
-/- trace length -/
-  red; intros; inv H; simpl; try omega; eapply external_call_trace_length; eauto
-Qed
+inductive final_state : state → int32 → Prop
+| mk (r m) : final_state (Returnstate (Vint r) Kstop m) r
 
 /- * Alternate operational semantics (big-step) -/
 
@@ -526,39 +499,31 @@ Qed
   statements evaluate to``outcomes'' indicating how execution should
   proceed afterwards. -/
 
-inductive outcome : Type :=
-| Out_normal : outcome                /- continue in sequence -/
-| Out_exit : ℕ → outcome           /- terminate [n+1] enclosing blocks -/
-| Out_return : option val → outcome  /- return immediately to caller -/
-| Out_tailcall_return : val → outcome. /- already returned to caller via a tailcall -/
+inductive outcome : Type
+| normal          : outcome              /- continue in sequence -/
+| exit            : ℕ → outcome          /- terminate [n+1] enclosing blocks -/
+| return          : option val → outcome /- return immediately to caller -/
+| tailcall_return : val → outcome        /- already returned to caller via a tailcall -/
 
-def outcome_block (out : outcome) : outcome :=
-  match out with
-| Out_exit O := Out_normal
-| Out_exit (S n) := Out_exit n
+def outcome_block : outcome → outcome
+| (outcome.exit 0) := outcome.normal
+| (outcome.exit (n+1)) := outcome.exit n
 | out := out
-  end
 
-def outcome_result_value
-    (out : outcome) (retsig : option typ) (vres : val) : Prop :=
-  match out with
-| Out_normal := vres = Vundef
-| Out_return none := vres = Vundef
-| Out_return (some v) := retsig ≠ none ∧ vres = v
-| Out_tailcall_return v := vres = v
-| _ := false
-  end
+def outcome_result_value (retsig : option typ) (vres : val) : outcome → Prop
+| outcome.normal              := vres = Vundef
+| (outcome.return none)       := vres = Vundef
+| (outcome.return (some v))   := retsig ≠ none ∧ vres = v
+| (outcome.tailcall_return v) := vres = v
+| _                           := false
 
-def outcome_free_mem
-    (out : outcome) (m : mem) (sp : block) (sz : ℤ) (m' : mem) :=
-  match out with
-| Out_tailcall_return _ := m' = m
-| _ := Mem.free m sp 0 sz = some m'
-  end
+def outcome_free_mem (m : mem) (sp : block) (sz : ℕ) (m' : mem) : outcome → Prop
+| (outcome.tailcall_return _) := m' = m
+| _                           := free m sp 0 sz = some m'
 
-section NATURALSEM
+section naturalsem
 
-parameter ge : genv
+parameter (ge : genv)
 
 /- Evaluation of a function invocation: [eval_funcall ge m f args t m' res]
   means that the function [f], applied to the arguments [args] in
@@ -566,16 +531,16 @@ parameter ge : genv
   [t] is the trace of observable events generated during the invocation.
 -/
 
-inductive eval_funcall :
-        mem → fundef → list val → trace →
-        mem → val → Prop :=
-| eval_funcall_internal :
-      ∀ m f vargs m1 sp e t e2 m2 out vres m3,
-      Mem.alloc m 0 f.(fn_stackspace) = (m1, sp) →
-      set_locals f.(fn_vars) (set_params vargs f.(fn_params)) = e →
-      exec_stmt f (Vptr sp Ptrofs.zero) e m1 f.(fn_body) t e2 m2 out →
-      outcome_result_value out f.(fn_sig).(sig_res) vres →
-      outcome_free_mem out m2 sp f.(fn_stackspace) m3 →
+mutual inductive eval_funcall, exec_stmt
+with eval_funcall :
+        mem → fundef → list val → list event →
+        mem → val → Prop
+| eval_funcall_internal (m : mem) (f : function) (vargs m1 sp e t e2 m2 out vres m3) :
+      m.alloc 0 f.stackspace = m1 → m.nextblock = sp →
+      set_locals (set_params f.params vargs) f.vars = e →
+      exec_stmt f (Vptr sp 0) e m1 f.body t e2 m2 out →
+      outcome_result_value f.sig.sig_res vres out →
+      outcome_free_mem m2 sp f.stackspace m3 out →
       eval_funcall m (Internal f) vargs t m3 vres
 | eval_funcall_external :
       ∀ ef m args t res m',
@@ -592,508 +557,87 @@ inductive eval_funcall :
 
 with exec_stmt :
          function → val →
-         env → mem → stmt → trace →
-         env → mem → outcome → Prop :=
-| exec_Sskip :
-      ∀ f sp e m,
-      exec_stmt f sp e m Sskip [] e m Out_normal
-| exec_Sassign :
-      ∀ f sp e m id a v,
-      eval_expr ge sp e m a v →
-      exec_stmt f sp e m (Sassign id a) [] (PTree.set id v e) m Out_normal
-| exec_Sstore :
-      ∀ f sp e m chunk addr a vaddr v m',
-      eval_expr ge sp e m addr vaddr →
-      eval_expr ge sp e m a v →
-      Mem.storev chunk m vaddr v = some m' →
-      exec_stmt f sp e m (Sstore chunk addr a) [] e m' Out_normal
-| exec_Scall :
-      ∀ f sp e m optid sig a bl vf vargs fd t m' vres e',
-      eval_expr ge sp e m a vf →
-      eval_exprlist ge sp e m bl vargs →
-      Genv.find_funct ge vf = some fd →
+         env → mem → stmt → list event →
+         env → mem → outcome → Prop
+| exec_Sskip (f sp e m) : exec_stmt f sp e m Sskip [] e m outcome.normal
+| exec_Sassign (f sp e m id a v) :
+      eval_expr ge sp e m a = some v →
+      exec_stmt f sp e m (Sassign id a) [] (PTree.set id v e) m outcome.normal
+| exec_Sstore (f sp e m chunk addr a vaddr v m') :
+      eval_expr ge sp e m addr = some vaddr →
+      eval_expr ge sp e m a = some v →
+      storev chunk m vaddr v = some m' →
+      exec_stmt f sp e m (Sstore chunk addr a) [] e m' outcome.normal
+| exec_Scall (f sp e m optid sig a bl vf vargs fd t m' vres e') :
+      eval_expr ge sp e m a = some vf →
+      mmap (eval_expr ge sp e m) bl = some vargs →
+      genv.find_funct ge vf = some fd →
       funsig fd = sig →
       eval_funcall m fd vargs t m' vres →
-      e' = set_optvar optid vres e →
-      exec_stmt f sp e m (Scall optid sig a bl) t e' m' Out_normal
-| exec_Sbuiltin :
-      ∀ f sp e m optid ef bl t m' vargs vres e',
-      eval_exprlist ge sp e m bl vargs →
+      e' = set_optvar e optid vres →
+      exec_stmt f sp e m (Scall optid sig a bl) t e' m' outcome.normal
+| exec_Sbuiltin (f sp e m optid ef bl t m' vargs vres e') :
+      mmap (eval_expr ge sp e m) bl = some vargs →
       external_call ef ge vargs m t vres m' →
-      e' = set_optvar optid vres e →
-      exec_stmt f sp e m (Sbuiltin optid ef bl) t e' m' Out_normal
-| exec_Sifthenelse :
-      ∀ f sp e m a s1 s2 v b t e' m' out,
-      eval_expr ge sp e m a v →
-      Val.bool_of_val v b →
+      e' = set_optvar e optid vres →
+      exec_stmt f sp e m (Sbuiltin optid ef bl) t e' m' outcome.normal
+| exec_Sifthenelse (f sp e m a s1 s2 v b t e' m' out) :
+      eval_expr ge sp e m a = some v →
+      v.to_bool = some b →
       exec_stmt f sp e m (if b then s1 else s2) t e' m' out →
       exec_stmt f sp e m (Sifthenelse a s1 s2) t e' m' out
-| exec_Sseq_continue :
-      ∀ f sp e m t s1 t1 e1 m1 s2 t2 e2 m2 out,
-      exec_stmt f sp e m s1 t1 e1 m1 Out_normal →
+| exec_Sseq_continue (f sp e m s1 t1 e1 m1 s2 t2 e2 m2 out) :
+      exec_stmt f sp e m s1 t1 e1 m1 outcome.normal →
       exec_stmt f sp e1 m1 s2 t2 e2 m2 out →
-      t = t1 ** t2 →
-      exec_stmt f sp e m (Sseq s1 s2) t e2 m2 out
-| exec_Sseq_stop :
-      ∀ f sp e m t s1 s2 e1 m1 out,
+      exec_stmt f sp e m (Sseq s1 s2) (t1 ++ t2) e2 m2 out
+| exec_Sseq_stop (f sp e m t s1 s2 e1 m1 out) :
       exec_stmt f sp e m s1 t e1 m1 out →
-      out ≠ Out_normal →
+      out ≠ outcome.normal →
       exec_stmt f sp e m (Sseq s1 s2) t e1 m1 out
-| exec_Sloop_loop :
-      ∀ f sp e m s t t1 e1 m1 t2 e2 m2 out,
-      exec_stmt f sp e m s t1 e1 m1 Out_normal →
+| exec_Sloop_loop (f sp e m s t1 e1 m1 t2 e2 m2 out) :
+      exec_stmt f sp e m s t1 e1 m1 outcome.normal →
       exec_stmt f sp e1 m1 (Sloop s) t2 e2 m2 out →
-      t = t1 ** t2 →
-      exec_stmt f sp e m (Sloop s) t e2 m2 out
-| exec_Sloop_stop :
-      ∀ f sp e m t s e1 m1 out,
+      exec_stmt f sp e m (Sloop s) (t1 ++ t2) e2 m2 out
+| exec_Sloop_stop (f sp e m t s e1 m1 out) :
       exec_stmt f sp e m s t e1 m1 out →
-      out ≠ Out_normal →
+      out ≠ outcome.normal →
       exec_stmt f sp e m (Sloop s) t e1 m1 out
-| exec_Sblock :
-      ∀ f sp e m s t e1 m1 out,
+| exec_Sblock (f sp e m s t e1 m1 out) :
       exec_stmt f sp e m s t e1 m1 out →
       exec_stmt f sp e m (Sblock s) t e1 m1 (outcome_block out)
-| exec_Sexit :
-      ∀ f sp e m n,
-      exec_stmt f sp e m (Sexit n) [] e m (Out_exit n)
-| exec_Sswitch :
-      ∀ f sp e m islong a cases default v n,
-      eval_expr ge sp e m a v →
-      switch_argument islong v n →
+| exec_Sexit (f sp e m n) :
+      exec_stmt f sp e m (Sexit n) [] e m (outcome.exit n)
+| exec_Sswitch (f sp e m islong a cases default v w n) :
+      eval_expr ge sp e m a = some v →
+      switch_argument islong v w n →
       exec_stmt f sp e m (Sswitch islong a cases default)
-                [] e m (Out_exit (switch_target n default cases))
-| exec_Sreturn_none :
-      ∀ f sp e m,
-      exec_stmt f sp e m (Sreturn none) [] e m (Out_return none)
-| exec_Sreturn_some :
-      ∀ f sp e m a v,
-      eval_expr ge sp e m a v →
-      exec_stmt f sp e m (Sreturn (some a)) [] e m (Out_return (some v))
-| exec_Stailcall :
-      ∀ f sp e m sig a bl vf vargs fd t m' m'' vres,
-      eval_expr ge (Vptr sp Ptrofs.zero) e m a vf →
-      eval_exprlist ge (Vptr sp Ptrofs.zero) e m bl vargs →
-      Genv.find_funct ge vf = some fd →
+                [] e m (outcome.exit (switch_target' w n default cases))
+| exec_Sreturn_none (f sp e m) :
+      exec_stmt f sp e m (Sreturn none) [] e m (outcome.return none)
+| exec_Sreturn_some (f sp e m a v) :
+      eval_expr ge sp e m a = some v →
+      exec_stmt f sp e m (Sreturn (some a)) [] e m (outcome.return (some v))
+| exec_Stailcall (f : function) (sp e m sig a bl vf vargs fd t m' m'' vres) :
+      eval_expr ge (Vptr sp 0) e m a = some vf →
+      mmap (eval_expr ge (Vptr sp 0) e m) bl = some vargs →
+      genv.find_funct ge vf = some fd →
       funsig fd = sig →
-      Mem.free m sp 0 f.(fn_stackspace) = some m' →
+      free m sp 0 f.stackspace = some m' →
       eval_funcall m' fd vargs t m'' vres →
-      exec_stmt f (Vptr sp Ptrofs.zero) e m (Stailcall sig a bl) t e m'' (Out_tailcall_return vres)
+      exec_stmt f (Vptr sp 0) e m (Stailcall sig a bl) t e m'' (outcome.tailcall_return vres)
 
-Scheme eval_funcall_ind2 := Minimality for eval_funcall Sort Prop
-  with exec_stmt_ind2 := Minimality for exec_stmt Sort Prop
-Combined Scheme eval_funcall_exec_stmt_ind2
-  from eval_funcall_ind2, exec_stmt_ind2
-
-/- Coinductive semantics for divergence.
-  [evalinf_funcall ge m f args t]
-  means that the function [f] diverges when applied to the arguments [args] in
-  memory state [m].  The infinite trace [t] is the trace of
-  observable events generated during the invocation.
--/
-
-CoInductive evalinf_funcall :
-        mem → fundef → list val → traceinf → Prop :=
-| evalinf_funcall_internal :
-      ∀ m f vargs m1 sp e t,
-      Mem.alloc m 0 f.(fn_stackspace) = (m1, sp) →
-      set_locals f.(fn_vars) (set_params vargs f.(fn_params)) = e →
-      execinf_stmt f (Vptr sp Ptrofs.zero) e m1 f.(fn_body) t →
-      evalinf_funcall m (Internal f) vargs t
-
-/- [execinf_stmt ge sp e m s t] means that statement [s] diverges.
-  [e] is the initial environment, [m] is the initial memory state,
-  and [t] the trace of observable events performed during the execution. -/
-
-with execinf_stmt :
-         function → val → env → mem → stmt → traceinf → Prop :=
-| execinf_Scall :
-      ∀ f sp e m optid sig a bl vf vargs fd t,
-      eval_expr ge sp e m a vf →
-      eval_exprlist ge sp e m bl vargs →
-      Genv.find_funct ge vf = some fd →
-      funsig fd = sig →
-      evalinf_funcall m fd vargs t →
-      execinf_stmt f sp e m (Scall optid sig a bl) t
-| execinf_Sifthenelse :
-      ∀ f sp e m a s1 s2 v b t,
-      eval_expr ge sp e m a v →
-      Val.bool_of_val v b →
-      execinf_stmt f sp e m (if b then s1 else s2) t →
-      execinf_stmt f sp e m (Sifthenelse a s1 s2) t
-| execinf_Sseq_1 :
-      ∀ f sp e m t s1 s2,
-      execinf_stmt f sp e m s1 t →
-      execinf_stmt f sp e m (Sseq s1 s2) t
-| execinf_Sseq_2 :
-      ∀ f sp e m t s1 t1 e1 m1 s2 t2,
-      exec_stmt f sp e m s1 t1 e1 m1 Out_normal →
-      execinf_stmt f sp e1 m1 s2 t2 →
-      t = t1 *** t2 →
-      execinf_stmt f sp e m (Sseq s1 s2) t
-| execinf_Sloop_body :
-      ∀ f sp e m s t,
-      execinf_stmt f sp e m s t →
-      execinf_stmt f sp e m (Sloop s) t
-| execinf_Sloop_loop :
-      ∀ f sp e m s t t1 e1 m1 t2,
-      exec_stmt f sp e m s t1 e1 m1 Out_normal →
-      execinf_stmt f sp e1 m1 (Sloop s) t2 →
-      t = t1 *** t2 →
-      execinf_stmt f sp e m (Sloop s) t
-| execinf_Sblock :
-      ∀ f sp e m s t,
-      execinf_stmt f sp e m s t →
-      execinf_stmt f sp e m (Sblock s) t
-| execinf_Stailcall :
-      ∀ f sp e m sig a bl vf vargs fd m' t,
-      eval_expr ge (Vptr sp Ptrofs.zero) e m a vf →
-      eval_exprlist ge (Vptr sp Ptrofs.zero) e m bl vargs →
-      Genv.find_funct ge vf = some fd →
-      funsig fd = sig →
-      Mem.free m sp 0 f.(fn_stackspace) = some m' →
-      evalinf_funcall m' fd vargs t →
-      execinf_stmt f (Vptr sp Ptrofs.zero) e m (Stailcall sig a bl) t
-
-end NATURALSEM
+end naturalsem
 
 /- Big-step execution of a whole program -/
 
-inductive bigstep_program_terminates (p : program) : trace → int32 → Prop :=
-| bigstep_program_terminates_intro :
-      ∀ b f m0 t m r,
-      let ge := Genv.globalenv p in
-      Genv.init_mem p = some m0 →
-      Genv.find_symbol ge p.(prog_main) = some b →
-      Genv.find_funct_ptr ge b = some f →
+inductive bigstep_program_terminates (p : program) : list event → int32 → Prop
+| mk (b f m0 t m r) :
+      genv.init_mem p = some m0 →
+      genv.find_symbol (genv.globalenv p) p.main = some b →
+      genv.find_funct_ptr (genv.globalenv p) b = some f →
       funsig f = signature_main →
-      eval_funcall ge m0 f nil t m (Vint r) →
-      bigstep_program_terminates p t r
+      eval_funcall (genv.globalenv p) m0 f [] t m (Vint r) →
+      bigstep_program_terminates t r
 
-inductive bigstep_program_diverges (p : program) : traceinf → Prop :=
-| bigstep_program_diverges_intro :
-      ∀ b f m0 t,
-      let ge := Genv.globalenv p in
-      Genv.init_mem p = some m0 →
-      Genv.find_symbol ge p.(prog_main) = some b →
-      Genv.find_funct_ptr ge b = some f →
-      funsig f = signature_main →
-      evalinf_funcall ge m0 f nil t →
-      bigstep_program_diverges p t
-
-def bigstep_semantics (p : program) :=
-  Bigstep_semantics (bigstep_program_terminates p) (bigstep_program_diverges p)
-
-/- ** Correctness of the big-step semantics with respect to the transition semantics -/
-
-section BIGSTEP_TO_TRANSITION
-
-parameter prog : program
-def ge := Genv.globalenv prog
-
-inductive outcome_state_match
-        (sp : val) (e : env) (m : mem) (f : function) (k : cont) :
-        outcome → state → Prop :=
-| osm_normal :
-      outcome_state_match sp e m f k
-                          Out_normal
-                          (State f Sskip k sp e m)
-| osm_exit : ∀ n,
-      outcome_state_match sp e m f k
-                          (Out_exit n)
-                          (State f (Sexit n) k sp e m)
-| osm_return_none : ∀ k',
-      call_cont k' = call_cont k →
-      outcome_state_match sp e m f k
-                          (Out_return none)
-                          (State f (Sreturn none) k' sp e m)
-| osm_return_some : ∀ k' a v,
-      call_cont k' = call_cont k →
-      eval_expr ge sp e m a v →
-      outcome_state_match sp e m f k
-                          (Out_return (some v))
-                          (State f (Sreturn (some a)) k' sp e m)
-| osm_tail : ∀ v,
-      outcome_state_match sp e m f k
-                          (Out_tailcall_return v)
-                          (Returnstate v (call_cont k) m)
-
-theorem is_call_cont_call_cont :
-  ∀ k, is_call_cont (call_cont k)
-Proof
-  induction k; simpl; auto
-Qed
-
-theorem call_cont_is_call_cont :
-  ∀ k, is_call_cont k → call_cont k = k
-Proof
-  destruct k; simpl; intros; auto || contradiction
-Qed
-
-lemma eval_funcall_exec_stmt_steps :
-  (∀ m fd args t m' res,
-   eval_funcall ge m fd args t m' res →
-   ∀ k,
-   is_call_cont k →
-   star step ge (Callstate fd args k m)
-              t (Returnstate res k m'))
-∧(∀ f sp e m s t e' m' out,
-   exec_stmt ge f sp e m s t e' m' out →
-   ∀ k,
-   ∃ S,
-   star step ge (State f s k sp e m) t S
-   ∧ outcome_state_match sp e' m' f k out S)
-Proof
-  apply eval_funcall_exec_stmt_ind2; intros
-
-/- funcall internal -/
-  destruct (H2 k) as [S [A B]]
-  assert (call_cont k = k) by (apply call_cont_is_call_cont; auto)
-  eapply star_left. econstructor; eauto
-  eapply star_trans. eexact A
-  inversion B; clear B; subst out; simpl in H3; simpl; try contradiction
-  /- Out normal -/
-  subst vres. apply star_one. apply step_skip_call; auto
-  /- Out_return None -/
-  subst vres. replace k with (call_cont k') by congruence
-  apply star_one. apply step_return_0; auto
-  /- Out_return Some -/
-  destruct H3. subst vres
-  replace k with (call_cont k') by congruence
-  apply star_one. eapply step_return_1; eauto
-  /- Out_tailcall_return -/
-  subst vres. red in H4. subst m3. rewrite H6. apply star_refl
-
-  reflexivity. traceEq
-
-/- funcall external -/
-  apply star_one. constructor; auto
-
-/- skip -/
-  econstructor; split
-  apply star_refl
-  constructor
-
-/- assign -/
-  ∃ (State f Sskip k sp (PTree.set id v e) m); split
-  apply star_one. constructor. auto
-  constructor
-
-/- store -/
-  econstructor; split
-  apply star_one. econstructor; eauto
-  constructor
-
-/- call -/
-  econstructor; split
-  eapply star_left. econstructor; eauto
-  eapply star_right. apply H4. red; auto
-  constructor. reflexivity. traceEq
-  subst e'. constructor
-
-/- builtin -/
-  econstructor; split
-  apply star_one. econstructor; eauto
-  subst e'. constructor
-
-/- ifthenelse -/
-  destruct (H2 k) as [S [A B]]
-  ∃ S; split
-  apply star_left with [] (State f (if b then s1 else s2) k sp e m) t
-  econstructor; eauto. exact A
-  traceEq
-  auto
-
-/- seq continue -/
-  destruct (H0 (Kseq s2 k)) as [S1 [A1 B1]]
-  destruct (H2 k) as [S2 [A2 B2]]
-  inv B1
-  ∃ S2; split
-  eapply star_left. constructor
-  eapply star_trans. eexact A1
-  eapply star_left. constructor. eexact A2
-  reflexivity. reflexivity. traceEq
-  auto
-
-/- seq stop -/
-  destruct (H0 (Kseq s2 k)) as [S1 [A1 B1]]
-  set (S2 :=
-    match out with
-    | Out_exit n := State f (Sexit n) k sp e1 m1
-    | _ := S1
-    end)
-  ∃ S2; split
-  eapply star_left. constructor. eapply star_trans. eexact A1
-  unfold S2; destruct out; try (apply star_refl)
-  inv B1. apply star_one. constructor
-  reflexivity. traceEq
-  unfold S2; inv B1; congruence || simpl; constructor; auto
-
-/- loop loop -/
-  destruct (H0 (Kseq (Sloop s) k)) as [S1 [A1 B1]]
-  destruct (H2 k) as [S2 [A2 B2]]
-  inv B1
-  ∃ S2; split
-  eapply star_left. constructor
-  eapply star_trans. eexact A1
-  eapply star_left. constructor. eexact A2
-  reflexivity. reflexivity. traceEq
-  auto
-
-/- loop stop -/
-  destruct (H0 (Kseq (Sloop s) k)) as [S1 [A1 B1]]
-  set (S2 :=
-    match out with
-    | Out_exit n := State f (Sexit n) k sp e1 m1
-    | _ := S1
-    end)
-  ∃ S2; split
-  eapply star_left. constructor. eapply star_trans. eexact A1
-  unfold S2; destruct out; try (apply star_refl)
-  inv B1. apply star_one. constructor
-  reflexivity. traceEq
-  unfold S2; inv B1; congruence || simpl; constructor; auto
-
-/- block -/
-  destruct (H0 (Kblock k)) as [S1 [A1 B1]]
-  set (S2 :=
-    match out with
-    | Out_normal := State f Sskip k sp e1 m1
-    | Out_exit O := State f Sskip k sp e1 m1
-    | Out_exit (S m) := State f (Sexit m) k sp e1 m1
-    | _ := S1
-    end)
-  ∃ S2; split
-  eapply star_left. constructor. eapply star_trans. eexact A1
-  unfold S2; destruct out; try (apply star_refl)
-  inv B1. apply star_one. constructor
-  inv B1. apply star_one. destruct n; constructor
-  reflexivity. traceEq
-  unfold S2; inv B1; simpl; try constructor; auto
-  destruct n; constructor
-
-/- exit -/
-  econstructor; split. apply star_refl. constructor
-
-/- switch -/
-  econstructor; split
-  apply star_one. econstructor; eauto. constructor
-
-/- return none -/
-  econstructor; split. apply star_refl. constructor; auto
-
-/- return some -/
-  econstructor; split. apply star_refl. constructor; auto
-
-/- tailcall -/
-  econstructor; split
-  eapply star_left. econstructor; eauto
-  apply H5. apply is_call_cont_call_cont. traceEq
-  econstructor
-Qed
-
-lemma eval_funcall_steps :
-   ∀ m fd args t m' res,
-   eval_funcall ge m fd args t m' res →
-   ∀ k,
-   is_call_cont k →
-   star step ge (Callstate fd args k m)
-              t (Returnstate res k m')
-Proof (proj1 eval_funcall_exec_stmt_steps)
-
-lemma exec_stmt_steps :
-   ∀ f sp e m s t e' m' out,
-   exec_stmt ge f sp e m s t e' m' out →
-   ∀ k,
-   ∃ S,
-   star step ge (State f s k sp e m) t S
-   ∧ outcome_state_match sp e' m' f k out S
-Proof (proj2 eval_funcall_exec_stmt_steps)
-
-lemma evalinf_funcall_forever :
-  ∀ m fd args T k,
-  evalinf_funcall ge m fd args T →
-  forever_plus step ge (Callstate fd args k m) T
-Proof
-  cofix CIH_FUN
-  assert (∀ sp e m s T f k,
-          execinf_stmt ge f sp e m s T →
-          forever_plus step ge (State f s k sp e m) T)
-  cofix CIH_STMT
-  intros. inv H
-
-/- call -/
-  eapply forever_plus_intro
-  apply plus_one. econstructor; eauto
-  apply CIH_FUN. eauto. traceEq
-
-/- ifthenelse -/
-  eapply forever_plus_intro with (s2 := State f (if b then s1 else s2) k sp e m)
-  apply plus_one. econstructor; eauto
-  apply CIH_STMT. eauto. traceEq
-
-/- seq 1 -/
-  eapply forever_plus_intro
-  apply plus_one. constructor
-  apply CIH_STMT. eauto. traceEq
-
-/- seq 2 -/
-  destruct (exec_stmt_steps _ _ _ _ _ _ _ _ _ H0 (Kseq s2 k))
-  as [S [A B]]. inv B
-  eapply forever_plus_intro
-  eapply plus_left. constructor
-  eapply star_right. eexact A. constructor
-  reflexivity. reflexivity
-  apply CIH_STMT. eauto. traceEq
-
-/- loop body -/
-  eapply forever_plus_intro
-  apply plus_one. econstructor; eauto
-  apply CIH_STMT. eauto. traceEq
-
-/- loop loop -/
-  destruct (exec_stmt_steps _ _ _ _ _ _ _ _ _ H0 (Kseq (Sloop s0) k))
-  as [S [A B]]. inv B
-  eapply forever_plus_intro
-  eapply plus_left. constructor
-  eapply star_right. eexact A. constructor
-  reflexivity. reflexivity
-  apply CIH_STMT. eauto. traceEq
-
-/- block -/
-  eapply forever_plus_intro
-  apply plus_one. econstructor; eauto
-  apply CIH_STMT. eauto. traceEq
-
-/- tailcall -/
-  eapply forever_plus_intro
-  apply plus_one. econstructor; eauto
-  apply CIH_FUN. eauto. traceEq
-
-/- function call -/
-  intros. inv H0
-  eapply forever_plus_intro
-  apply plus_one. econstructor; eauto
-  apply H. eauto
-  traceEq
-Qed
-
-theorem bigstep_semantics_sound :
-  bigstep_sound (bigstep_semantics prog) (semantics prog)
-Proof
-  constructor; intros
-/- termination -/
-  inv H. econstructor; econstructor
-  split. econstructor; eauto
-  split. apply eval_funcall_steps. eauto. red; auto
-  econstructor
-/- divergence -/
-  inv H. econstructor
-  split. econstructor; eauto
-  eapply forever_plus_forever
-  eapply evalinf_funcall_forever; eauto
-Qed
-
-end BIGSTEP_TO_TRANSITION.
 
 end cminor
