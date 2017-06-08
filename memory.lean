@@ -27,7 +27,7 @@ Being empty is represented by the absence of any permission.
 import .memdata data.nat.bquant data.nat.dvd
 
 namespace memory
-open maps memdata values ast memdata.memval word integers
+open maps memdata values ast memdata.memval word integers ast.memory_chunk
 
 inductive permission : Type
 | Freeable : permission
@@ -1074,11 +1074,6 @@ lo.ex_nat $ λlo', hi.ex_nat $ λhi', range_perm m b lo' hi' k p
 def valid_access_Z (m chunk b) (ofs : ℤ) (p) : Prop :=
 ofs.ex_nat $ λ ofs', valid_access m chunk b ofs' p
 
-#check λ (f : meminj) (m1 m2 : mem), ∀ b1 b2 delta ofs ofs' k p,
-  f b1 = some (b2, delta) →
-  perm_Z m1 b1 ofs k p →
-  perm_Z m2 b2 (ofs + delta) k p
-
 structure mem_inj (f : meminj) (m1 m2 : mem) : Prop :=
 (mi_perm : ∀ b1 b2 delta ofs k p,
   f b1 = some (b2, delta) →
@@ -1616,7 +1611,7 @@ theorem store_bytes_unmapped_inject {f m1 b1 ofs bytes1 n1 m2} :
   f b1 = none →
   inject f n1 m2 := sorry'
 
-theorem store_bytes_outside_inject {f m1 m2 b ofs bytes2 m2'} :
+theorem store_bytes_outside_inject {f m1 m2 b ofs} {bytes2 : list memval} {m2'} :
   inject f m1 m2 →
   (∀ b' delta ofs',
     f b' = some (b, delta) →

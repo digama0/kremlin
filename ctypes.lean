@@ -4,7 +4,7 @@ import .ast .errors .linking
 
 namespace ctypes
 open ast maps errors linking
-open ast.external_function
+open ast.external_function ast.memory_chunk
 
 /- Compcert C types are similar to those of C.  They include numeric types,
   pointers, arrays, function types, and composite types (struct and
@@ -60,15 +60,15 @@ inductive type : Type
 | Tlong : signedness → attr → type              /- 64-bit integer types -/
 | Tfloat : floatsize → attr → type              /- floating-point types -/
 | Tpointer : type → attr → type                 /- pointer types ([*ty]) -/
-| Tarray : type → ℤ → attr → type              /- array types ([ty[len]]) -/
+| Tarray : type → ℕ → attr → type              /- array types ([ty[len]]) -/
 | Tfunction : list type → type → calling_convention → type    /- function types -/
 | Tstruct : ident → attr → type                 /- struct types -/
 | Tunion : ident → attr → type                  /- union types -/
-open type
+export type
 
 instance intsize_eq : decidable_eq intsize := by tactic.mk_dec_eq_instance
 
-instance type_eq : decidable_eq type := sorry --by tactic.mk_dec_eq_instance
+instance type_eq : decidable_eq type := sorry' --by tactic.mk_dec_eq_instance
 
 /- Extract the attributes of a type. -/
 
@@ -143,15 +143,14 @@ structure composite : Type :=
 (co_su : struct_or_union)
 (co_members : members)
 (co_attr : attr)
-(co_sizeof : ℤ)
-(co_alignof : ℤ)
+(co_sizeof : ℕ)
+(co_alignof : ℕ)
 (co_rank : ℕ)
-(co_sizeof_pos : co_sizeof ≥ 0)
 (co_alignof_two_p : ∃ n, co_alignof = 2^n)
 (co_sizeof_alignof : co_alignof ∣ co_sizeof)
 open composite
 
-def composite_env : Type := PTree.t composite
+def composite_env : Type := PTree composite
 
 /- * Operations over types -/
 
@@ -195,8 +194,6 @@ end
   unless they occur under a pointer or function type.  [void] and
   function types are incomplete types. -/
 
-#check λ env : composite_env, λ id, env ^! id 
-
 def complete_type (env : composite_env) : type → bool
 | Tvoid             := ff
 | (Tint _ _ _)      := tt
@@ -218,7 +215,7 @@ def complete_or_function_type (env : composite_env) : type → bool
   to the type.  If an "alignas" attribute is given, use it as alignment
   in preference to [al]. -/
 
-def align_attr (a : attr) (al : ℤ) : ℤ :=
+def align_attr (a : attr) (al : ℕ) : ℕ :=
 match a.attr_alignas with
 | some l := 2^l
 | none := al
@@ -228,7 +225,7 @@ end
   types.  However, it is convenient that [alignof] is a total
   function.  For incomplete types, it returns 1. -/
 
-def alignof_inner (env : composite_env) : type → ℤ
+def alignof_inner (env : composite_env) : type → ℕ
 | Tvoid             := 1
 | (Tint I8 _ _)     := 1
 | (Tint I16 _ _)    := 2
@@ -243,16 +240,16 @@ def alignof_inner (env : composite_env) : type → ℤ
 | (Tstruct id _)    := match env^!id with some co := co_alignof co | none := 1 end
 | (Tunion id _)     := match env^!id with some co := co_alignof co | none := 1 end
 
-def alignof (env : composite_env) (t : type) : ℤ :=
+def alignof (env : composite_env) (t : type) : ℕ :=
 align_attr (attr_of_type t) (alignof_inner env t)
 
 theorem align_attr_two_p (al a) :
   (∃ n, al = 2^n) →
-  (∃ n, align_attr a al = 2^n) := sorry
+  (∃ n, align_attr a al = 2^n) := sorry'
 
-theorem alignof_two_p (env t) : ∃ n, alignof env t = 2^n := sorry
+theorem alignof_two_p (env t) : ∃ n, alignof env t = 2^n := sorry'
 
-theorem alignof_pos (env t) : alignof env t > 0 := sorry
+theorem alignof_pos (env t) : alignof env t > 0 := sorry'
 
 /- ** Size of a type -/
 
@@ -263,7 +260,7 @@ theorem alignof_pos (env t) : alignof env t > 0 := sorry
   arbitrarily taken to be 0.
 -/
 
-def sizeof (env: composite_env) : type → ℤ
+def sizeof (env: composite_env) : type → ℕ
 | Tvoid             := 1
 | (Tint I8 _ _)     := 1
 | (Tint I16 _ _)    := 2
@@ -273,13 +270,13 @@ def sizeof (env: composite_env) : type → ℤ
 | (Tfloat F32 _)    := 4
 | (Tfloat F64 _)    := 8
 | (Tpointer _ _)    := if archi.ptr64 then 8 else 4
-| (Tarray t' n _)   := sizeof t' * max 0 n
+| (Tarray t' n _)   := sizeof t' * n
 | (Tfunction _ _ _) := 1
 | (Tstruct id _)    := match env^!id with some co := co_sizeof co | none := 0 end
 | (Tunion id _)     := match env^!id with some co := co_sizeof co | none := 0 end
 
 
-lemma sizeof_pos (env t) : sizeof env t >= 0 := sorry
+lemma sizeof_pos (env t) : sizeof env t >= 0 := sorry'
 
 /- The size of a type is an integral multiple of its alignment,
   unless the alignment was artificially increased with the [__Alignas]
@@ -290,14 +287,14 @@ def naturally_aligned : type → Prop
 | t := attr.attr_alignas (attr_of_type t) = none
 
 lemma sizeof_alignof_compat (env t) (h : naturally_aligned t) :
-  alignof env t ∣ sizeof env t := sorry
+  alignof env t ∣ sizeof env t := sorry'
 
 /- ** Size and alignment for composite definitions -/
 
 /- The alignment for a structure or union is the max of the alignment
   of its members. -/
 
-def alignof_composite (env : composite_env) : members → ℤ
+def alignof_composite (env : composite_env) : members → ℕ
 | [] := 1
 | ((id, t) :: m') := max (alignof env t) (alignof_composite m')
 
@@ -306,23 +303,23 @@ def alignof_composite (env : composite_env) : members → ℤ
   laid out consecutively, and padding is inserted to align
   each field to the alignment for its type. -/
 
-def sizeof_struct (env : composite_env) : ℤ → members → ℤ
+def sizeof_struct (env : composite_env) : ℕ → members → ℕ
 | cur [] := cur
 | cur ((id, t) :: m') := sizeof_struct (align cur (alignof env t) + sizeof env t) m'
 
 /- The size of an union is the max of the sizes of its members. -/
 
-def sizeof_union (env : composite_env) : members → ℤ
+def sizeof_union (env : composite_env) : members → ℕ
 | [] := 0
 | ((id, t) :: m') := max (sizeof env t) (sizeof_union m')
 
-lemma alignof_composite_two_p (env m) : ∃ n, alignof_composite env m = 2^n := sorry
+lemma alignof_composite_two_p (env m) : ∃ n, alignof_composite env m = 2^n := sorry'
 
-lemma alignof_composite_pos (env m a) : align_attr a (alignof_composite env m) > 0 := sorry
+lemma alignof_composite_pos (env m a) : align_attr a (alignof_composite env m) > 0 := sorry'
 
-lemma sizeof_struct_incr (env m cur) : cur ≤ sizeof_struct env cur m := sorry
+lemma sizeof_struct_incr (env m cur) : cur ≤ sizeof_struct env cur m := sorry'
 
-lemma sizeof_union_pos (env m) : 0 ≤ sizeof_union env m := sorry
+lemma sizeof_union_pos (env m) : 0 ≤ sizeof_union env m := sorry'
 
 /- ** Byte offset for a field of a structure -/
 
@@ -331,14 +328,14 @@ lemma sizeof_union_pos (env m) : 0 ≤ sizeof_union env m := sorry
   consecutively, and padding is inserted to align each field to the
   alignment for its type. -/
 
-def field_offset_rec (env : composite_env) (id : ident) : members → ℤ → res ℤ
+def field_offset_rec (env : composite_env) (id : ident) : members → ℕ → res ℕ
 | []                 pos := error [MSG "Unknown field ", CTX id]
 | ((id', t) :: fld') pos :=
       if id = id'
       then OK (align pos (alignof env t))
       else field_offset_rec fld' (align pos (alignof env t) + sizeof env t)
 
-def field_offset (env : composite_env) (id : ident) (fld : members) : res ℤ :=
+def field_offset (env : composite_env) (id : ident) (fld : members) : res ℕ :=
 field_offset_rec env id fld 0
 
 def field_type (id : ident) : members → res type
@@ -350,31 +347,31 @@ def field_type (id : ident) : members → res type
 
 theorem field_offset_rec_in_range (env id ofs ty fld pos) :
   field_offset_rec env id fld pos = OK ofs → field_type id fld = OK ty →
-  pos ≤ ofs ∧ ofs + sizeof env ty ≤ sizeof_struct env pos fld := sorry
+  pos ≤ ofs ∧ ofs + sizeof env ty ≤ sizeof_struct env pos fld := sorry'
 
 lemma field_offset_in_range (env fld id ofs ty) :
   field_offset env id fld = OK ofs → field_type id fld = OK ty →
-  0 ≤ ofs ∧ ofs + sizeof env ty ≤ sizeof_struct env 0 fld := sorry
+  0 ≤ ofs ∧ ofs + sizeof env ty ≤ sizeof_struct env 0 fld := sorry'
 
 /- Second, two distinct fields do not overlap -/
 
 lemma field_offset_no_overlap (env id1 ofs1 ty1 id2 ofs2 ty2 fld) :
   field_offset env id1 fld = OK ofs1 → field_type id1 fld = OK ty1 →
   field_offset env id2 fld = OK ofs2 → field_type id2 fld = OK ty2 →
-  id1 ≠ id2 → ofs1 + sizeof env ty1 ≤ ofs2 ∨ ofs2 + sizeof env ty2 ≤ ofs1 := sorry
+  id1 ≠ id2 → ofs1 + sizeof env ty1 ≤ ofs2 ∨ ofs2 + sizeof env ty2 ≤ ofs1 := sorry'
 
 /- Third, if a struct is a prefix of another, the offsets of common fields
     are the same. -/
 
 lemma field_offset_prefix (env id ofs fld2 fld1) :
   field_offset env id fld1 = OK ofs →
-  field_offset env id (fld1 ++ fld2 : list _) = OK ofs := sorry
+  field_offset env id (fld1 ++ fld2 : list _) = OK ofs := sorry'
 
 /- Fourth, the position of each field respects its alignment. -/
 
 lemma field_offset_aligned (env id fld ofs ty) :
   field_offset env id fld = OK ofs → field_type id fld = OK ty →
-  alignof env ty ∣ ofs := sorry
+  ↑(alignof env ty) ∣ ofs := sorry'
 
 /- ** Access modes -/
 
@@ -446,12 +443,12 @@ def alignof_blockcopy (env : composite_env) : type → ℤ
 
 lemma alignof_blockcopy_1248 (env ty) :
   let a := alignof_blockcopy env ty in
-  a = 1 ∨ a = 2 ∨ a = 4 ∨ a = 8 := sorry
+  a = 1 ∨ a = 2 ∨ a = 4 ∨ a = 8 := sorry'
 
-lemma alignof_blockcopy_pos (env ty) : alignof_blockcopy env ty > 0 := sorry
+lemma alignof_blockcopy_pos (env ty) : alignof_blockcopy env ty > 0 := sorry'
 
 lemma sizeof_alignof_blockcopy_compat (env ty) :
-  alignof_blockcopy env ty ∣ sizeof env ty := sorry
+  alignof_blockcopy env ty ∣ sizeof env ty := sorry'
 
 /- Type ranks -/
 
@@ -511,12 +508,12 @@ signature.mk (args.map typ_of_type) (opttyp_of_type res) cc
 
 /- * Construction of the composite environment -/
 
-def sizeof_composite (env : composite_env) : struct_or_union → members → ℤ
+def sizeof_composite (env : composite_env) : struct_or_union → members → ℕ
 | struct_or_union.struct := sizeof_struct env 0
 | struct_or_union.union  := sizeof_union env
 
 
-lemma sizeof_composite_pos (env su m) : 0 ≤ sizeof_composite env su m := sorry
+lemma sizeof_composite_pos (env su m) : 0 ≤ sizeof_composite env su m := sorry'
 
 def complete_members (env : composite_env) : members → bool
 | [] := true
@@ -525,7 +522,7 @@ def complete_members (env : composite_env) : members → bool
 lemma complete_member (env) (id : ident) (t m) :
   (id, t) ∈ m →
   complete_members env m = true →
-  complete_type env t = true := sorry
+  complete_type env t = true := sorry'
 
 /- Convert a composite def to its internal representation.
   The size and alignment of the composite are determined at this time.
@@ -564,9 +561,8 @@ match env^!id, complete_members env m with
          co_sizeof := align (sizeof_composite env su m) al,
          co_alignof := al,
          co_rank := rank_members env m,
-         co_sizeof_pos := sorry,
-         co_alignof_two_p := sorry,
-         co_sizeof_alignof := sorry }
+         co_alignof_two_p := sorry',
+         co_sizeof_alignof := sorry' }
 end
 
 /- The composite environment for a program is obtained by entering
@@ -583,7 +579,7 @@ def add_composite_definitions : composite_env →
     add_composite_definitions (PTree.set id co env) defs
 
 def build_composite_env (defs: list composite_definition) :=
-add_composite_definitions (PTree.empty _) defs.
+add_composite_definitions (∅ : PTree _) defs.
 
 /- Stability properties for alignments, sizes, and ranks.  If the type is
   complete in a composite environment [env], its size, alignment, and rank
@@ -595,40 +591,40 @@ variables env env': composite_env
 variable h : ∀ id co, (env^!id) = some co → (env'^!id) = some co
 
 lemma alignof_stable (t) : complete_type env t →
-  alignof env' t = alignof env t := sorry
+  alignof env' t = alignof env t := sorry'
 
 lemma sizeof_stable (t) : complete_type env t →
-  sizeof env' t = sizeof env t := sorry
+  sizeof env' t = sizeof env t := sorry'
 
 lemma complete_type_stable (t) : complete_type env t →
-  complete_type env' t := sorry
+  complete_type env' t := sorry'
 
 lemma rank_type_stable (t) : complete_type env t →
-  rank_type env' t = rank_type env t := sorry
+  rank_type env' t = rank_type env t := sorry'
 
 lemma alignof_composite_stable (m) : complete_members env m →
-  alignof_composite env' m = alignof_composite env m := sorry
+  alignof_composite env' m = alignof_composite env m := sorry'
 
 lemma sizeof_struct_stable (m pos) : complete_members env m →
-  sizeof_struct env' pos m = sizeof_struct env pos m := sorry
+  sizeof_struct env' pos m = sizeof_struct env pos m := sorry'
 
 lemma sizeof_union_stable (m) : complete_members env m →
-  sizeof_union env' m = sizeof_union env m := sorry
+  sizeof_union env' m = sizeof_union env m := sorry'
 
 lemma sizeof_composite_stable (su m) : complete_members env m →
-  sizeof_composite env' su m = sizeof_composite env su m := sorry
+  sizeof_composite env' su m = sizeof_composite env su m := sorry'
 
 lemma complete_members_stable (m) : complete_members env m →
-  complete_members env' m := sorry
+  complete_members env' m := sorry'
 
 lemma rank_members_stable (m) : complete_members env m →
-  rank_members env' m = rank_members env m := sorry
+  rank_members env' m = rank_members env m := sorry'
 
 end stability
 
 lemma add_composite_definitions_incr (id co defs env1 env2) :
   add_composite_definitions env1 defs = OK env2 →
-  (env1^!id) = some co → (env2^!id) = some co := sorry
+  (env1^!id) = some co → (env2^!id) = some co := sorry'
 
 /- It follows that the sizes and alignments contained in the composite
   environment produced by [build_composite_env] are consistent with
@@ -649,14 +645,14 @@ def composite_env_consistent (env: composite_env) : Prop :=
 
 lemma composite_consistent_stable (env env': composite_env)
   (ext : ∀ id co, (env^!id) = some co → (env'^!id) = some co)
-  (co) : composite_consistent env co → composite_consistent env' co := sorry
+  (co) : composite_consistent env co → composite_consistent env' co := sorry'
 
 lemma composite_of_def_consistent (env id su m a co) :
   composite_of_def env id su m a = OK co →
-  composite_consistent env co := sorry
+  composite_consistent env co := sorry'
 
 theorem build_composite_env_consistent (defs env) :
-  build_composite_env defs = OK env → composite_env_consistent env := sorry
+  build_composite_env defs = OK env → composite_env_consistent env := sorry'
 
 /- Moreover, every composite def is reflected in the composite environment. -/
 
@@ -664,30 +660,30 @@ theorem build_composite_env_charact (id su m a defs env) :
   build_composite_env defs = OK env →
   composite_definition.mk id su m a ∈ defs →
   ∃ co, (env^!id) = some co ∧ co_members co = m ∧
-        co_attr co = a ∧ co_su co = su := sorry
+        co_attr co = a ∧ co_su co = su := sorry'
 
 theorem build_composite_env_domain (env defs id co) :
   build_composite_env defs = OK env →
   (env^!id) = some co →
-  composite_definition.mk id (co_su co) (co_members co) (co_attr co) ∈ defs := sorry
+  composite_definition.mk id (co_su co) (co_members co) (co_attr co) ∈ defs := sorry'
 
 /- As a corollay, in a consistent environment, the rank of a composite type
   is strictly greater than the ranks of its member types. -/
 
 theorem rank_type_members (ce id t m) : (id, t) ∈ m →
-  rank_type ce t ≤ rank_members ce m := sorry
+  rank_type ce t ≤ rank_members ce m := sorry'
 
 lemma rank_struct_member (ce id a co id1 t1) :
   composite_env_consistent ce →
   (ce^!id) = some co →
   (id1, t1) ∈ co_members co →
-  rank_type ce t1 < rank_type ce (Tstruct id a) := sorry
+  rank_type ce t1 < rank_type ce (Tstruct id a) := sorry'
 
 lemma rank_union_member (ce id a co id1 t1) :
   composite_env_consistent ce →
   (ce^!id) = some co →
   (id1, t1) ∈ co_members co →
-  rank_type ce t1 < rank_type ce (Tunion id a) := sorry
+  rank_type ce t1 < rank_type ce (Tunion id a) := sorry'
 
 /- * Programs and compilation units -/
 
@@ -712,17 +708,17 @@ inductive fundef (F : Type) : Type
 - a proof that this environment is consistent with the definitions. -/
 
 structure program (F : Type) : Type :=
-(prog_defs: list (ident × globdef (fundef F) type))
-(prog_public: list ident)
-(prog_main: ident)
-(prog_types: list composite_definition)
-(prog_comp_env: composite_env)
-(prog_comp_env_eq: build_composite_env prog_types = OK prog_comp_env)
+(defs: list (ident × globdef (fundef F) type))
+(public: list ident)
+(main: ident)
+(types: list composite_definition)
+(comp_env: composite_env)
+(comp_env_eq: build_composite_env types = OK comp_env)
 
 def program_of_program {F} (p : program F) : ast.program (fundef F) type :=
-{ prog_defs := p.prog_defs,
-  prog_public := p.prog_public,
-  prog_main := p.prog_main }
+{ defs := p.defs,
+  public := p.public,
+  main := p.main }
 
 instance {F} : has_coe (program F) (ast.program (fundef F) type) := ⟨program_of_program⟩
 
@@ -733,12 +729,12 @@ def make_program {F} (types: list composite_definition)
 match _, rfl : ∀ r, build_composite_env types = r → _ with
 | error e, h := error e
 | OK ce, h :=
-  OK { prog_defs := defs,
-       prog_public := public,
-       prog_main := main,
-       prog_types := types,
-       prog_comp_env := ce,
-       prog_comp_env_eq := h }
+  OK { defs := defs,
+       public := public,
+       main := main,
+       types := types,
+       comp_env := ce,
+       comp_env_eq := h }
 end
 
 end programs
@@ -775,7 +771,7 @@ else none
 lemma link_composite_def_inv {l1 l2 l} (h : link_composite_defs l1 l2 = some l) :
     (∀ cd1 ∈ l1, ∀ cd2 ∈ l2, name_composite_def cd2 = name_composite_def cd1 → cd2 = cd1)
   ∧ l = l1 ++ filter_redefs l1 l2
-  ∧ (∀ {x}, x ∈ l ↔ x ∈ l1 ∨ x ∈ l2) := sorry
+  ∧ (∀ {x}, x ∈ l ↔ x ∈ l1 ∨ x ∈ l2) := sorry'
 
 instance Linker_composite_defs : linker (list composite_definition) :=
 { link := link_composite_defs,
@@ -791,12 +787,12 @@ instance Linker_composite_defs : linker (list composite_definition) :=
 lemma add_composite_definitions_append (l1 l2 env env'') :
   add_composite_definitions env (l1 ++ l2) = OK env'' ↔
   ∃ env', add_composite_definitions env l1 = OK env' ∧
-          add_composite_definitions env' l2 = OK env'' := sorry
+          add_composite_definitions env' l2 = OK env'' := sorry'
 
 lemma composite_of_def_eq (env id co) :
   composite_consistent env co →
   (env^!id) = none →
-  composite_of_def env id (co_su co) (co_members co) (co_attr co) = OK co := sorry
+  composite_of_def env id (co_su co) (co_members co) (co_attr co) = OK co := sorry'
 
 lemma composite_consistent_unique {env co1 co2} :
   composite_consistent env co1 →
@@ -804,14 +800,14 @@ lemma composite_consistent_unique {env co1 co2} :
   co_su co1 = co_su co2 →
   co_members co1 = co_members co2 →
   co_attr co1 = co_attr co2 →
-  co1 = co2 := sorry
+  co1 = co2 := sorry'
 
 lemma composite_of_def_stable {env env'}
   (ext : ∀ id co, (env^!id) = some co → (env'^!id) = some co)
   {id su m a co}
   (hn : (env'^!id) = none)
   (ce : composite_of_def env id su m a = OK co) :
-  composite_of_def env' id su m a = OK co := sorry
+  composite_of_def env' id su m a = OK co := sorry'
 
 def link_add_composite_definitions {l0 env0}
   (hl0 : build_composite_env l0 = OK env0) :
@@ -837,13 +833,13 @@ begin
     simp [name_composite_def] at hel,
     { note i2 := agree2 id,
       simp [name_composite_def, hel] at i2,
-      exact let ⟨env2', _⟩ := @IH _ _ (PTree.set id co env2) acd sorry sorry sorry sorry in
-      ⟨env2', sorry⟩
+      exact let ⟨env2', _⟩ := @IH _ _ (PTree.set id co env2) acd sorry' sorry' sorry' sorry' in
+      ⟨env2', sorry'⟩
     },
     { note i2 := agree2 id,
       simp [name_composite_def, decidable.by_contradiction hel] at i2,
-      exact let ⟨env2', _⟩ := @IH _ _ env2 acd sorry sorry sorry sorry in
-      ⟨env2', sorry⟩ } },
+      exact let ⟨env2', _⟩ := @IH _ _ env2 acd sorry' sorry' sorry' sorry' in
+      ⟨env2', sorry'⟩ } },
   { note := (acd : error _ = OK _), contradiction }
 end
 
@@ -863,10 +859,10 @@ let ⟨env, P, Q, R⟩ := begin
   { intros, assumption },
   { intros,
     by_cases (id ∈ list.map name_composite_def l1) with hel; simp [hel],
-    { rw PTree.gempty, admit } },
+    { rw PTree.gempty, exact sorry' } },
   { assumption }
 end in
-⟨env, sorry, R, Q⟩
+⟨env, sorry', R, Q⟩
 
 /- ** Linking function definitions -/
 
@@ -897,9 +893,9 @@ instance Linker_fundef (F: Type) : linker (fundef F) :=
     { rw -hif, apply linkorder_fundef.ext_int },
     { contradiction }
   end,
-  link_linkorder := sorry }
+  link_linkorder := sorry' }
 
-theorem link_fundef_either {F : Type} {f1 f2 f : fundef F} : link f1 f2 = some f → f = f1 ∨ f = f2 := sorry
+theorem link_fundef_either {F : Type} {f1 f2 f : fundef F} : link f1 f2 = some f → f = f1 ∨ f = f2 := sorry'
 
 /- ** Linking programs -/
 
@@ -911,22 +907,22 @@ def link_program {F} (p1 p2 : program F) : option (program F) :=
 match link (program_of_program p1) (program_of_program p2) with
 | none := none
 | some p :=
-  match _, rfl : ∀ o, link p1.prog_types p2.prog_types = o → _ with
+  match _, rfl : ∀ o, link p1.types p2.types = o → _ with
   | none, _ := none
   | some typs, EQ :=
-    let ⟨env, P, Q⟩ := link_build_composite_env p1.prog_comp_env_eq p2.prog_comp_env_eq EQ in
-    some { prog_defs := p.prog_defs,
-           prog_public := p.prog_public,
-           prog_main := p.prog_main,
-           prog_types := typs,
-           prog_comp_env := env,
-           prog_comp_env_eq := P }
+    let ⟨env, P, Q⟩ := link_build_composite_env p1.comp_env_eq p2.comp_env_eq EQ in
+    some { defs := p.defs,
+           public := p.public,
+           main := p.main,
+           types := typs,
+           comp_env := env,
+           comp_env_eq := P }
   end
 end
 
 def linkorder_program {F} (p1 p2: program F) : Prop :=
      linkorder (program_of_program p1) (program_of_program p2)
-  ∧ ∀ id co, (p1.prog_comp_env^!id) = some co → (p2.prog_comp_env^!id) = some co
+  ∧ ∀ id co, (p1.comp_env^!id) = some co → (p2.comp_env^!id) = some co
 
 instance linker_program (F) : linker (program F) :=
 { link := link_program,
@@ -934,7 +930,7 @@ instance linker_program (F) : linker (program F) :=
   linkorder_refl := λx, ⟨@linker.linkorder_refl _ _ _, λid co h, h⟩,
   linkorder_trans := λx y z ⟨p1, a1⟩ ⟨p2, a2⟩, ⟨linker.linkorder_trans p1 p2,
     λid co, a2 id co ∘ a1 id co⟩,
-  link_linkorder := sorry }
+  link_linkorder := sorry' }
 
 /- ** Commutation between linking and program transformations -/
 
@@ -950,11 +946,11 @@ variable link_match_fundef : ∀ {f1 tf1 f2 tf2 f},
 
 def match_program (p : program F) (tp : program G) : Prop :=
 @linking.match_program _ type _ type _ _ (λctx f tf, match_fundef f tf) eq p tp ∧
-tp.prog_types = p.prog_types
+tp.types = p.types
 
 theorem link_match_program {p1 p2 tp1 tp2 p} :
   link p1 p2 = some p → match_program p1 tp1 → match_program p2 tp2 →
-  ∃ tp, link tp1 tp2 = some tp ∧ match_program p tp := sorry
+  ∃ tp, link tp1 tp2 = some tp ∧ match_program p tp := sorry'
 
 end link_match_program
 

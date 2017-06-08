@@ -5,6 +5,7 @@ import .ast .integers .values
 
 namespace memdata
 open ast integers values word floats
+     ast.memory_chunk
 
 inductive quantity : Type | Q32 | Q64
 open quantity
@@ -82,7 +83,7 @@ lemma decode_encode_int_8 (x : int64) :
 
 lemma encode_int_mod (n) {x y} (h : (repr x : word (8*n)) = repr y) :
   encode_int n x = encode_int n y :=
-by delta encode_int; rw words_of_int_mod _ (mod_eq_of_repr_eq h)
+by dsimp [encode_int]; rw words_of_int_mod _ (mod_eq_of_repr_eq h)
 
 lemma encode_int_8_mod (x y) : (repr x : byte) = repr y →
   encode_int 1 x = encode_int 1 y :=

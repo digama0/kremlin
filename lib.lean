@@ -115,7 +115,7 @@ lemma int.testbit_mod_two_p (n x i) : int.test_bit (x % 2^n) i =
 
 theorem Ztestbit_two_p_m1 (n i) : int.test_bit (2^n - 1) i = to_bool (i < n) := sorry
 
-def align (n : ℤ) (amount : ℤ) :=
+def align (n : ℕ) (amount : ℕ) :=
   ((n + amount - 1) / amount) * amount.
 
 lemma align_le (x y) (h : y > 0) : x ≤ align x y := sorry

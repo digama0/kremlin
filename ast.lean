@@ -109,7 +109,7 @@ inductive memory_chunk : Type
 | Mfloat64        /- 64-bit double-precision float -/
 | Many32          /- any value that fits in 32 bits -/
 | Many64          /- any value -/
-export memory_chunk
+open memory_chunk
 
 instance chunk_eq : decidable_eq memory_chunk := by tactic.mk_dec_eq_instance
 

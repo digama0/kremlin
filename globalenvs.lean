@@ -24,6 +24,7 @@ import .memory .linking
 namespace globalenvs
 open memdata memory values ast integers maps linking errors
      memdata.memval word floats memdata.quantity memory.perm_kind
+     ast.memory_chunk
 
 /- Auxiliary function for initialization of global variables. -/
 
