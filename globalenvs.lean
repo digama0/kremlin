@@ -38,7 +38,7 @@ def store_zeros : mem → block → ℕ → ℕ → option mem
   focusing on symbol names and their associated blocks.  They do not
   contain mappings from blocks to function or variable definitions. -/
 
-structure senv : Type :=
+structure Senv : Type :=
 (find_symbol : ident → option block)
 (public_symbol : ident → bool)
 (invert_symbol : block → option ident)
@@ -52,9 +52,9 @@ structure senv : Type :=
 (find_symbol_below : ∀ {id b}, find_symbol id = some b → b < nextblock)
 (block_is_volatile_below : ∀ {b}, block_is_volatile b → b < nextblock)
 
-namespace senv
+namespace Senv
 
-def symbol_address (ge : senv) (id : ident) (ofs : ptrofs) : val :=
+def symbol_address (ge : Senv) (id : ident) (ofs : ptrofs) : val :=
   match find_symbol ge id with
 | some b := Vptr b ofs
 | none := Vundef
@@ -69,18 +69,18 @@ theorem shift_symbol_address_32 {ge id ofs n} : ¬ archi.ptr64 →
 theorem shift_symbol_address_64 {ge id ofs n} : archi.ptr64 →
   symbol_address ge id (ofs + ptrofs.of_int64 n) = (symbol_address ge id ofs).addl n := sorry'
 
-def equiv (se1 se2 : senv) : Prop :=
+def equiv (se1 se2 : Senv) : Prop :=
      (∀ id, find_symbol se2 id = find_symbol se1 id)
   ∧ (∀ id, public_symbol se2 id = public_symbol se1 id)
   ∧ (∀ b, block_is_volatile se2 b = block_is_volatile se1 b)
 
-end senv
+end Senv
 
 /- * Global environments -/
 
 /- The type of global environments. -/
 
-structure genv (F V : Type) : Type :=
+structure Genv (F V : Type) : Type :=
 (public : list ident)              /- which symbol names are public -/
 (symb : PTree block)             /- mapping symbol -> block -/
 (defs : PTree (globdef F V))     /- mapping block -> definition -/
@@ -90,7 +90,7 @@ structure genv (F V : Type) : Type :=
 (vars_inj : ∀ {id1 id2 b},
     PTree.get id1 symb = some b → PTree.get id2 symb = some b → id1 = id2)
 
-namespace genv
+namespace Genv
 section
 
 variable {F : Type}  /- The type of function descriptions -/
@@ -100,14 +100,14 @@ variable {V : Type}  /- The type of information attached to variables -/
 
 /- [find_symbol ge id] returns the block associated with the given name, if any -/
 
-def find_symbol (ge : genv F V) (id : ident) : option block :=
+def find_symbol (ge : Genv F V) (id : ident) : option block :=
   PTree.get id ge.symb
 
 /- [symbol_address ge id ofs] returns a pointer into the block associated
   with [id], at byte offset [ofs].  [Vundef] is returned if no block is associated
   to [id]. -/
 
-def symbol_address (ge : genv F V) (id : ident) (ofs : ptrofs) : val :=
+def symbol_address (ge : Genv F V) (id : ident) (ofs : ptrofs) : val :=
   match find_symbol ge id with
 | some b := Vptr b ofs
 | none := Vundef
@@ -115,30 +115,30 @@ def symbol_address (ge : genv F V) (id : ident) (ofs : ptrofs) : val :=
 
 /- [public_symbol ge id] says whether the name [id] is public and defined. -/
 
-def public_symbol (ge : genv F V) (id : ident) : bool :=
+def public_symbol (ge : Genv F V) (id : ident) : bool :=
 (find_symbol ge id).is_some && (id ∈ ge.public)
 
 /- [find_def ge b] returns the global definition associated with the given address. -/
 
-def find_def (ge : genv F V) (b : block) : option (globdef F V) :=
+def find_def (ge : Genv F V) (b : block) : option (globdef F V) :=
 PTree.get b ge.defs
 
 /- [find_funct_ptr ge b] returns the function description associated with
     the given address. -/
 
-def find_funct_ptr (ge : genv F V) (b : block) : option F :=
+def find_funct_ptr (ge : Genv F V) (b : block) : option F :=
 match find_def ge b with some (Gfun f) := some f | _ := none end
 
 /- [find_funct] is similar to [find_funct_ptr], but the function address
     is given as a value, which must be a pointer with offset 0. -/
 
-def find_funct (ge : genv F V) : val → option F
+def find_funct (ge : Genv F V) : val → option F
 | (Vptr b ofs) := if ofs = 0 then find_funct_ptr ge b else none
 | _ := none
 
 /- [invert_symbol ge b] returns the name associated with the given block, if any -/
 
-def invert_symbol (ge : genv F V) (b : block) : option ident :=
+def invert_symbol (ge : Genv F V) (b : block) : option ident :=
 PTree.fold
   (λ res id b', if b = b' then some id else res)
   ge.symb none
@@ -146,13 +146,13 @@ PTree.fold
 /- [find_var_info ge b] returns the information attached to the variable
    at address [b]. -/
 
-def find_var_info (ge : genv F V) (b : block) : option (globvar V) :=
+def find_var_info (ge : Genv F V) (b : block) : option (globvar V) :=
 match find_def ge b with some (Gvar v) := some v | _ := none end
 
 /- [block_is_volatile ge b] returns [true] if [b] points to a global variable
   of volatile type, [false] otherwise. -/
 
-def block_is_volatile (ge : genv F V) (b : block) : bool :=
+def block_is_volatile (ge : Genv F V) (b : block) : bool :=
 match find_var_info ge b with
 | none := ff
 | some gv := gv.volatile
@@ -160,7 +160,7 @@ end
 
 /- ** Constructing the global environment -/
 
-def add_global (ge : genv F V) : ident × globdef F V → genv F V | (id, g) :=
+def add_global (ge : Genv F V) : ident × globdef F V → Genv F V | (id, g) :=
 { public := ge.public,
   symb := PTree.set id ge.next ge.symb,
   defs := PTree.set ge.next g ge.defs,
@@ -190,13 +190,13 @@ def add_global (ge : genv F V) : ident × globdef F V → genv F V | (id, g) :=
     { exact ge.vars_inj h1 h2 },
   end }
 
-def add_globals (ge : genv F V) (gl : list (ident × globdef F V)) : genv F V :=
+def add_globals (ge : Genv F V) (gl : list (ident × globdef F V)) : Genv F V :=
 gl.foldl add_global ge
 
-lemma add_globals_app (ge : genv F V) (gl2 gl1) :
+lemma add_globals_app (ge : Genv F V) (gl2 gl1) :
   add_globals ge (gl1 ++ gl2) = add_globals (add_globals ge gl1) gl2 := sorry'
 
-def empty (pub : list ident) : genv F V :=
+def empty (pub : list ident) : Genv F V :=
 { public := pub,
   symb := ∅,
   defs := ∅,
@@ -205,13 +205,13 @@ def empty (pub : list ident) : genv F V :=
   defs_range := λb g' h, by rw PTree.gempty at h; contradiction,
   vars_inj := λid1 id2 b h, by rw PTree.gempty at h; contradiction }
 
-def globalenv (p : program F V) : genv F V := add_globals (empty p.public) p.defs
+def globalenv (p : program F V) : Genv F V := add_globals (empty p.public) p.defs
 
 /- Proof principles -/
 
 section globalenv_principles
 
-variable P : genv F V → Prop
+variable P : Genv F V → Prop
 include P
 
 lemma add_globals_preserves {gl ge} :
@@ -245,30 +245,30 @@ end globalenv_principles
 
 /- ** Properties of the operations over global environments -/
 
-theorem public_symbol_exists {ge : genv F V} {id} :
+theorem public_symbol_exists {ge : Genv F V} {id} :
   public_symbol ge id → ∃ b, find_symbol ge id = some b := sorry'
 
-theorem shift_symbol_address {ge : genv F V} {id ofs delta} :
+theorem shift_symbol_address {ge : Genv F V} {id ofs delta} :
   symbol_address ge id (ofs + delta) = (symbol_address ge id ofs).offset_ptr delta := sorry'
 
-theorem shift_symbol_address_32 {ge : genv F V} {id ofs n} :
+theorem shift_symbol_address_32 {ge : Genv F V} {id ofs n} :
   ¬ archi.ptr64 →
   symbol_address ge id (ofs + ptrofs.of_int n) = symbol_address ge id ofs + n := sorry'
 
-theorem shift_symbol_address_64 {ge : genv F V} {id ofs n} :
+theorem shift_symbol_address_64 {ge : Genv F V} {id ofs n} :
   archi.ptr64 →
   symbol_address ge id (ofs + ptrofs.of_int64 n) = (symbol_address ge id ofs).addl n := sorry'
 
-theorem find_funct_inv {ge : genv F V} {v f} :
+theorem find_funct_inv {ge : Genv F V} {v f} :
   find_funct ge v = some f → ∃ b, v = Vptr b 0 := sorry'
 
-theorem find_funct_find_funct_ptr {ge : genv F V} {b} :
+theorem find_funct_find_funct_ptr {ge : Genv F V} {b} :
   find_funct ge (Vptr b 0) = find_funct_ptr ge b := sorry'
 
-theorem find_funct_ptr_iff {ge : genv F V} {b f} :
+theorem find_funct_ptr_iff {ge : Genv F V} {b f} :
   find_funct_ptr ge b = some f ↔ find_def ge b = some (Gfun f) := sorry'
 
-theorem find_var_info_iff {ge : genv F V} {b v} :
+theorem find_var_info_iff {ge : Genv F V} {b v} :
   find_var_info ge b = some v ↔ find_def ge b = some (Gvar v) := sorry'
 
 theorem find_def_symbol {p : program F V} {id g} :
@@ -306,36 +306,36 @@ theorem find_funct_prop (P : F → Prop) {p : program F V} {v f} :
   find_funct (globalenv p) v = some f →
   P f := sorry'
 
-theorem global_addresses_distinct {ge : genv F V} {id1 id2 b1 b2} :
+theorem global_addresses_distinct {ge : Genv F V} {id1 id2 b1 b2} :
   id1 ≠ id2 →
   find_symbol ge id1 = some b1 →
   find_symbol ge id2 = some b2 →
   b1 ≠ b2 := sorry'
 
-theorem invert_find_symbol {ge : genv F V} {id b} :
+theorem invert_find_symbol {ge : Genv F V} {id b} :
   invert_symbol ge b = some id → find_symbol ge id = some b := sorry'
 
-theorem find_invert_symbol {ge : genv F V} {id b} :
+theorem find_invert_symbol {ge : Genv F V} {id b} :
   find_symbol ge id = some b → invert_symbol ge b = some id := sorry'
 
 def advance_next (gl : list (ident × globdef F V)) (x : pos_num) :=
 gl.foldl (λ n g, pos_num.succ n) x
 
-theorem genv_next_add_globals (gl) (ge : genv F V) :
+theorem genv_next_add_globals (gl) (ge : Genv F V) :
   (add_globals ge gl).next = advance_next gl ge.next := sorry'
 
-theorem genv_public_add_globals (gl) (ge : genv F V) :
+theorem genv_public_add_globals (gl) (ge : Genv F V) :
   (add_globals ge gl).public = ge.public := sorry'
 
 theorem globalenv_public (p : program F V) :
   (globalenv p).public = p.public := sorry'
 
-theorem block_is_volatile_below {ge : genv F V} {b} :
+theorem block_is_volatile_below {ge : Genv F V} {b} :
   block_is_volatile ge b → b < ge.next := sorry'
 
 /- ** Coercing a global environment into a symbol environment -/
 
-def to_senv (ge : genv F V) : senv :=
+def to_senv (ge : Genv F V) : Senv :=
 { find_symbol := ge.find_symbol,
   public_symbol := ge.public_symbol,
   invert_symbol := ge.invert_symbol,
@@ -348,13 +348,13 @@ def to_senv (ge : genv F V) : senv :=
   find_symbol_below := ge.symb_range,
   block_is_volatile_below := ge.block_is_volatile_below }
 
-instance : has_coe (genv F V) senv := ⟨to_senv⟩
+instance : has_coe (Genv F V) Senv := ⟨to_senv⟩
 
 /- * Construction of the initial memory state -/
 
 section init_mem
 
-variable ge : genv F V
+variable ge : Genv F V
 
 def store_init_data (m : mem) (b : block) (p : ℕ) : init_data → option mem
 | (init_data.int8 n) := store Mint8unsigned m b p (Vint n)
@@ -587,17 +587,17 @@ def globdef_initialized (m : mem) (b : block) : globdef F V → Prop
       ∧ (¬ v.volatile → load_bytes m b 0 (init_data.list_size v.init) =
                         some (bytes_of_init_data_list ge v.init))
 
-def globals_initialized (g : genv F V) (m : mem) :=
+def globals_initialized (g : Genv F V) (m : mem) :=
 ∀ b gd, find_def g b = some gd → globdef_initialized ge m b gd
 
-lemma alloc_global_initialized {g : genv F V} {m : mem} {id gd m'} :
+lemma alloc_global_initialized {g : Genv F V} {m : mem} {id gd m'} :
   g.next = m.nextblock →
   alloc_global ge m (id, gd) = some m' →
   globals_initialized ge g m →
      globals_initialized ge (add_global g (id, gd)) m'
   ∧ (add_global g (id, gd)).next = m'.nextblock := sorry'
 
-lemma alloc_globals_initialized {gl} {g : genv F V} {m m'} :
+lemma alloc_globals_initialized {gl} {g : Genv F V} {m m'} :
   alloc_globals g m gl = some m' →
   g.next = m.nextblock →
   globals_initialized ge g m →
@@ -654,7 +654,7 @@ theorem init_mem_characterization_2 {p : program F V} {b fd m} :
 
 section init_mem_inj
 
-variable {ge : genv F V}
+variable {ge : Genv F V}
 variable {thr : block}
 variable (symb_inject : ∀ id b, find_symbol ge id = some b → b < thr)
 include symb_inject
@@ -703,7 +703,7 @@ theorem initmem_inject {p : program F V} {m} :
 
 section init_mem_inversion
 
-variable (ge : genv F V)
+variable (ge : Genv F V)
 
 lemma store_init_data_aligned {m b p i m'} :
   store_init_data ge m b p i = some m' →
@@ -729,7 +729,7 @@ theorem init_mem_inversion {p : program F V} {m id v} :
 
 section init_mem_exists
 
-variable (ge : genv F V)
+variable (ge : Genv F V)
 
 lemma store_zeros_exists {m b p n} :
   range_perm m b p (p + n) Cur Writable →
@@ -773,7 +773,7 @@ section match_genvs
 
 parameters {A B V W : Type} (R : globdef A V → globdef B W → Prop)
 
-structure match_genvs (ge1 : genv A V) (ge2 : genv B W) : Prop :=
+structure match_genvs (ge1 : Genv A V) (ge2 : Genv B W) : Prop :=
 (next : ge2.next = ge1.next)
 (symb : ∀ id, PTree.get id ge2.symb = PTree.get id ge1.symb)
 (defs : ∀ b, option.rel R (PTree.get b ge1.defs) (PTree.get b ge2.defs))
@@ -821,7 +821,7 @@ theorem find_var_info_match {b v} : find_var_info (globalenv p) b = some v →
 theorem find_symbol_match {s : ident} :
   find_symbol (globalenv tp) s = find_symbol (globalenv p) s := sorry'
 
-theorem senv_match : senv.equiv (globalenv p) (globalenv tp) := sorry'
+theorem senv_match : Senv.equiv (globalenv p) (globalenv tp) := sorry'
 
 lemma store_init_data_list_match {idl m b ofs m'} :
   store_init_data_list (globalenv p) m b ofs idl = some m' →
@@ -853,7 +853,7 @@ theorem find_funct_transf_partial {v f} : find_funct (globalenv p) v = some f �
 theorem find_symbol_transf_partial {s : ident} :
   find_symbol (globalenv tp) s = find_symbol (globalenv p) s := sorry'
 
-theorem senv_transf_partial : senv.equiv (globalenv p) (globalenv tp) := sorry'
+theorem senv_transf_partial : Senv.equiv (globalenv p) (globalenv tp) := sorry'
 
 theorem init_mem_transf_partial {m} : init_mem p = some m → init_mem tp = some m := sorry'
 
@@ -878,12 +878,12 @@ theorem find_funct_transf {v f} :
 theorem find_symbol_transf {s : ident} :
   find_symbol (globalenv tp) s = find_symbol (globalenv p) s := sorry'
 
-theorem senv_transf : senv.equiv (globalenv p) (globalenv tp) := sorry'
+theorem senv_transf : Senv.equiv (globalenv p) (globalenv tp) := sorry'
 
 theorem init_mem_transf {m} : init_mem p = some m → init_mem tp = some m := sorry'
 
 end transform_total
 
-end genv
+end Genv
 
 end globalenvs

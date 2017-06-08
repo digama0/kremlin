@@ -1,12 +1,12 @@
-import .ctypes .cminor
+import .ctypes .cop .globalenvs
 
 /- The Clight language: a simplified version of Compcert C where all
   expressions are pure and assignments and function calls are
   statements, not expressions. -/
 
 namespace clight
-open ctypes integers ast maps cminor floats values memory word
-     ctypes.fundef ctypes.mode
+open ctypes integers ast maps floats values memory word cop globalenvs
+     errors ctypes.fundef ctypes.mode
 
 /- * Abstract syntax -/
 
@@ -157,14 +157,14 @@ def program := ctypes.program function
   It also contains a composite environment, used by type-dependent operations. -/
 
 structure genv :=
-(genv : globalenvs.genv fundef type)
+(genv : Genv fundef type)
 (cenv : composite_env)
 
-instance coe_genv_genv : has_coe genv (globalenvs.genv fundef type) := ⟨genv.genv⟩
+instance coe_genv_genv : has_coe genv (Genv fundef type) := ⟨genv.genv⟩
 instance coe_genv_cenv : has_coe genv composite_env := ⟨genv.cenv⟩
 
 def globalenv (p : program) : genv :=
-{ genv := globalenvs.genv.globalenv (program_of_program p),
+{ genv := Genv.globalenv (program_of_program p),
   cenv := p.comp_env }
 
 /- The local environment maps local variables to block references and
@@ -327,16 +327,16 @@ with eval_expr : expr → val → Prop
       eval_expr (Eaddrof a ty) (Vptr loc ofs)
 | eval_Eunop (op a ty v1 v) :
       eval_expr a v1 →
-      sem_unary_operation op v1 (typeof a) m = some v →
+      sem_unary_operation op m v1 (typeof a) = some v →
       eval_expr (Eunop op a ty) v
 | eval_Ebinop (op a1 a2 ty v1 v2 v) :
       eval_expr a1 v1 →
       eval_expr a2 v2 →
-      sem_binary_operation ge op v1 (typeof a1) v2 (typeof a2) m = some v →
+      sem_binary_operation ge op m v1 (typeof a1) v2 (typeof a2) = some v →
       eval_expr (Ebinop op a1 a2 ty) v
 | eval_Ecast (a ty v1 v) :
       eval_expr a v1 →
-      sem_cast v1 (typeof a) ty m = some v →
+      sem_cast m v1 (typeof a) ty = some v →
       eval_expr (Ecast a ty) v
 | eval_Esizeof (ty1 ty) :
       eval_expr (Esizeof ty1 ty) (Vptrofs (repr (sizeof ge ty1)))
@@ -351,142 +351,111 @@ with eval_expr : expr → val → Prop
   in l-value position.  The result is the memory location [b, ofs]
   that contains the value of the expression [a]. -/
 
-with eval_lvalue : expr → block → ptrofs → Prop :=
-| eval_Evar_local :   ∀ id l ty,
-      e!id = some(l, ty) →
-      eval_lvalue (Evar id ty) l Ptrofs.zero
-| eval_Evar_global : ∀ id l ty,
-      e!id = none →
-      Genv.find_symbol ge id = some l →
-      eval_lvalue (Evar id ty) l Ptrofs.zero
-| eval_Ederef : ∀ a ty l ofs,
+with eval_lvalue : expr → block → ptrofs → Prop
+| eval_Evar_local (id l ty) :
+      (e^!id) = some (l, ty) →
+      eval_lvalue (Evar id ty) l 0
+| eval_Evar_global (id l ty) :
+      (e^!id) = none →
+      Genv.find_symbol ge.genv id = some l →
+      eval_lvalue (Evar id ty) l 0
+| eval_Ederef (a ty l ofs) :
       eval_expr a (Vptr l ofs) →
       eval_lvalue (Ederef a ty) l ofs
- | eval_Efield_struct :   ∀ a i ty l ofs id co att delta,
+ | eval_Efield_struct (a i ty l ofs id co att delta) :
       eval_expr a (Vptr l ofs) →
       typeof a = Tstruct id att →
-      ge.(genv_cenv)!id = some co →
-      field_offset ge i (co_members co) = OK delta →
-      eval_lvalue (Efield a i ty) l (Ptrofs.add ofs (Ptrofs.repr delta))
- | eval_Efield_union :   ∀ a i ty l ofs id co att,
+      (ge.cenv^!id) = some co →
+      field_offset ge i co.co_members = OK delta →
+      eval_lvalue (Efield a i ty) l (ofs + repr delta)
+ | eval_Efield_union (a i ty l ofs id co att) :
       eval_expr a (Vptr l ofs) →
       typeof a = Tunion id att →
-      ge.(genv_cenv)!id = some co →
+      (ge.cenv^!id) = some co →
       eval_lvalue (Efield a i ty) l ofs
-
-Scheme eval_expr_ind2 := Minimality for eval_expr Sort Prop
-  with eval_lvalue_ind2 := Minimality for eval_lvalue Sort Prop
-Combined Scheme eval_expr_lvalue_ind from eval_expr_ind2, eval_lvalue_ind2
 
 /- [eval_exprlist ge e m al tyl vl] evaluates a list of r-value
   expressions [al], cast their values to the types given in [tyl],
   and produces the list of cast values [vl].  It is used to
   evaluate the arguments of function calls. -/
 
-inductive eval_exprlist : list expr → typelist → list val → Prop :=
-| eval_Enil :
-      eval_exprlist nil Tnil nil
-| eval_Econs :   ∀ a bl ty tyl v1 v2 vl,
+inductive eval_exprlist : list expr → list type → list val → Prop
+| nil : eval_exprlist [] [] []
+| cons (a bl ty tyl v1 v2 vl) :
       eval_expr a v1 →
-      sem_cast v1 (typeof a) ty m = some v2 →
+      sem_cast m v1 (typeof a) ty = some v2 →
       eval_exprlist bl tyl vl →
-      eval_exprlist (a :: bl) (Tcons ty tyl) (v2 :: vl)
+      eval_exprlist (a :: bl) (ty :: tyl) (v2 :: vl)
 
-end EXPR
+end expr
 
 /- ** Transition semantics for statements and functions -/
 
 /- Continuations -/
 
-inductive cont : Type :=
+inductive cont : Type
 | Kstop : cont
 | Kseq : statement → cont → cont       /- [Kseq s2 k] = after [s1] in [s1;s2] -/
 | Kloop1 : statement → statement → cont → cont /- [Kloop1 s1 s2 k] = after [s1] in [Sloop s1 s2] -/
 | Kloop2 : statement → statement → cont → cont /- [Kloop1 s1 s2 k] = after [s2] in [Sloop s1 s2] -/
 | Kswitch : cont → cont       /- catches [break] statements arising out of [switch] -/
 | Kcall : option ident →                  /- where to store result -/
-           function →                      /- calling function -/
-           env →                           /- local env of calling function -/
-           temp_env →                      /- temporary env of calling function -/
-           cont → cont
+          function →                      /- calling function -/
+          env →                           /- local env of calling function -/
+          temp_env →                      /- temporary env of calling function -/
+          cont → cont
+open cont
 
 /- Pop continuation until a call or stop -/
 
-def call_cont (k : cont) : cont :=
-  match k with
-| Kseq s k := call_cont k
-| Kloop1 s1 s2 k := call_cont k
-| Kloop2 s1 s2 k := call_cont k
-| Kswitch k := call_cont k
-| _ := k
-  end
+def call_cont : cont → cont
+| (Kseq s k)       := call_cont k
+| (Kloop1 s1 s2 k) := call_cont k
+| (Kloop2 s1 s2 k) := call_cont k
+| (Kswitch k)      := call_cont k
+| k                := k
 
-def is_call_cont (k : cont) : Prop :=
-  match k with
-| Kstop := true
-| Kcall _ _ _ _ _ := true
-| _ := false
-  end
+def is_call_cont : cont → bool
+| Kstop             := tt
+| (Kcall _ _ _ _ _) := tt
+| _                 := ff
 
 /- States -/
 
-inductive state : Type :=
+inductive state : Type
 | State
       (f : function)
       (s : statement)
       (k : cont)
       (e : env)
       (le : temp_env)
-      (m : mem) : state
+      (m : mem)
 | Callstate
       (fd : fundef)
       (args : list val)
       (k : cont)
-      (m : mem) : state
+      (m : mem)
 | Returnstate
       (res : val)
       (k : cont)
-      (m : mem) : state
+      (m : mem)
 
 /- Find the statement and manufacture the continuation
   corresponding to a label -/
 
-def find_label (lbl : label) (s : statement) (k : cont)
-                    {struct s} : option (statement * cont) :=
-  match s with
-| Ssequence s1 s2 :=
-      match find_label lbl s1 (Kseq s2 k) with
-      | some sk := some sk
-      | none := find_label lbl s2 k
-      end
-| Sifthenelse a s1 s2 :=
-      match find_label lbl s1 k with
-      | some sk := some sk
-      | none := find_label lbl s2 k
-      end
-| Sloop s1 s2 :=
-      match find_label lbl s1 (Kloop1 s1 s2 k) with
-      | some sk := some sk
-      | none := find_label lbl s2 (Kloop2 s1 s2 k)
-      end
-| Sswitch e sl :=
-      find_label_ls lbl sl (Kswitch k)
-| Slabel lbl' s' :=
-      if ident_eq lbl lbl' then some(s', k) else find_label lbl s' k
-| _ := none
-  end
+mutual def find_label, find_label_ls (lbl : label)
+with find_label : statement → cont → option (statement × cont)
+| (Ssequence s1 s2)     := λk, find_label s1 (Kseq s2 k) <|> find_label s2 k
+| (Sifthenelse a s1 s2) := λk, find_label s1 k <|> find_label s2 k
+| (Sloop s1 s2)         := λk, find_label s1 (Kloop1 s1 s2 k) <|> find_label s2 (Kloop2 s1 s2 k)
+| (Sswitch e sl)        := λk, find_label_ls sl (Kswitch k)
+| (Slabel lbl' s')      := λk, if lbl = lbl' then some (s', k) else find_label s' k
+| _                     := λk, none
+with find_label_ls : list (option ℤ × statement) → cont → option (statement × cont)
+| []                    := λk, none
+| ((_, s) :: sl')       := λk, find_label s (Kseq (seq_of_labeled_statement sl') k) <|> find_label_ls sl' k
 
-with find_label_ls (lbl : label) (sl : labeled_statements) (k : cont)
-                    {struct sl} : option (statement * cont) :=
-  match sl with
-| LSnil := none
-| LScons _ s sl' :=
-      match find_label lbl s (Kseq (seq_of_labeled_statement sl') k) with
-      | some sk := some sk
-      | none := find_label_ls lbl sl' k
-      end
-  end
-
+#exit
 /- Semantics for allocation of variables and binding of parameters at
   function entry.  Two semantics are supported: one where
   parameters are local variables, reside in memory, and can have their address

@@ -165,9 +165,9 @@ def funsig : fundef → signature
 - [env]: local environments, map local variables to values.
 -/
 
-def genv := globalenvs.genv fundef unit
+def genv := Genv fundef unit
 def env := PTree val
-instance : has_coe genv senv := ⟨genv.to_senv⟩
+instance : has_coe genv Senv := ⟨Genv.to_senv⟩
 
 /- The following functions build the initial local environment at
   function entry, binding parameters to the provided arguments and
@@ -480,9 +480,9 @@ end relsem
 
 inductive initial_state (p : program) : state → Prop
 | mk (b f m0) :
-  genv.init_mem p = some m0 →
-  genv.find_symbol (genv.globalenv p) p.main = some b →
-  genv.find_funct_ptr (genv.globalenv p) b = some f →
+  Genv.init_mem p = some m0 →
+  Genv.find_symbol (Genv.globalenv p) p.main = some b →
+  Genv.find_funct_ptr (Genv.globalenv p) b = some f →
   funsig f = signature_main →
   initial_state (Callstate f [] Kstop m0)
 
@@ -571,7 +571,7 @@ with exec_stmt :
 | exec_Scall (f sp e m optid sig a bl vf vargs fd t m' vres e') :
       eval_expr ge sp e m a = some vf →
       mmap (eval_expr ge sp e m) bl = some vargs →
-      genv.find_funct ge vf = some fd →
+      Genv.find_funct ge vf = some fd →
       funsig fd = sig →
       eval_funcall m fd vargs t m' vres →
       e' = set_optvar e optid vres →
@@ -620,7 +620,7 @@ with exec_stmt :
 | exec_Stailcall (f : function) (sp e m sig a bl vf vargs fd t m' m'' vres) :
       eval_expr ge (Vptr sp 0) e m a = some vf →
       mmap (eval_expr ge (Vptr sp 0) e m) bl = some vargs →
-      genv.find_funct ge vf = some fd →
+      Genv.find_funct ge vf = some fd →
       funsig fd = sig →
       free m sp 0 f.stackspace = some m' →
       eval_funcall m' fd vargs t m'' vres →
@@ -632,11 +632,11 @@ end naturalsem
 
 inductive bigstep_program_terminates (p : program) : list event → int32 → Prop
 | mk (b f m0 t m r) :
-      genv.init_mem p = some m0 →
-      genv.find_symbol (genv.globalenv p) p.main = some b →
-      genv.find_funct_ptr (genv.globalenv p) b = some f →
+      Genv.init_mem p = some m0 →
+      Genv.find_symbol (Genv.globalenv p) p.main = some b →
+      Genv.find_funct_ptr (Genv.globalenv p) b = some f →
       funsig f = signature_main →
-      eval_funcall (genv.globalenv p) m0 f [] t m (Vint r) →
+      eval_funcall (Genv.globalenv p) m0 f [] t m (Vint r) →
       bigstep_program_terminates t r
 
 
