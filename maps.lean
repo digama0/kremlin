@@ -26,6 +26,9 @@ by { intros i m, revert i,
      exact o,
      exact Il i', exact Ir i' }
 
+def get_or {A : Type} (n : pos_num) (t : PTree A) (dfl : A) : A :=
+(t.get n).get_or_else dfl
+
 def set {A : Type} : pos_num → A → PTree A → PTree A
 | pos_num.one       v leaf         := node leaf (some v) leaf
 | (pos_num.bit0 i') v leaf         := node (set i' v leaf) none leaf

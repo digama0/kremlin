@@ -179,3 +179,45 @@ def swap_comparison : comparison → comparison
 | Cge := Cle
 
 def {u} sorry' {α : Sort u} : α := sorry
+
+def encode_int : ℤ → pos_num
+| 0 := 1
+| (nat.succ n) := bit0 $ pos_num.of_nat_succ n
+| -[1+ n] := bit1 $ pos_num.of_nat_succ n
+
+@[class] inductive semidecidable (p : Prop) : Type
+| fail {} : semidecidable
+| success : p → semidecidable
+
+namespace semidecidable
+
+instance of_decidable (p : Prop) [decidable p] : semidecidable p :=
+if h : p then semidecidable.success h else semidecidable.fail
+
+instance and (p q : Prop) : ∀ [semidecidable p] [semidecidable q], semidecidable (p ∧ q)
+| fail _ := fail
+| _ fail := fail
+| (success hp) (success hq) := success ⟨hp, hq⟩
+
+instance or (p q : Prop) : ∀ [semidecidable p] [semidecidable q], semidecidable (p ∨ q)
+| (success hp) _ := success (_root_.or.inl hp)
+| _ (success hq) := success (_root_.or.inr hq)
+| fail fail := fail
+
+def of_imp {p q : Prop} (h : p → q) : ∀ [semidecidable p], semidecidable q
+| fail := fail
+| (success hp) := success (h hp)
+
+def bind (p) {q} : ∀ [semidecidable p], (p → semidecidable q) → semidecidable q
+| (success hp) h := h hp
+| fail _ := fail
+
+def bind_opt {A} {C : option A → Prop} :
+  ∀ (o : option A), (∀ x, semidecidable (C (some x))) → semidecidable (C o)
+| (some x) h := h x
+| none     _ := fail
+
+instance imp (p q : Prop) [decidable p] [h : p → semidecidable q] : semidecidable (p → q) :=
+if hp : p then @of_imp _ (p → q) (λx _, x) (h hp) else success (λhn, absurd hn hp)
+
+end semidecidable

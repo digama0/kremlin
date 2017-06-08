@@ -63,7 +63,7 @@ instance coe_word_int : has_coe word ℤ := ⟨signed⟩
   machine integer.  The argument is treated modulo [modulus]. -/
 
 def in_srange (x : ℤ) : bool := min_signed ≤ x ∧ x < half_modulus
-def in_urange (x : ℤ) : bool := 0 ≤ x ∧ x < modulus
+def in_urange (x : ℕ) : bool := x < modulus
 
 def iwordsize := repr wordsize
 
@@ -75,6 +75,7 @@ instance eq_dec : decidable_eq word := by tactic.mk_dec_eq_instance
 /- * Arithmetic and logical operations over machine integers -/
 
 def ltu (x y : word) : Prop := unsigned x < unsigned y
+def leu (x y : word) : Prop := unsigned x ≤ unsigned y
 instance : has_lt word := ⟨λx y, signed x < signed y⟩
 instance : has_le word := ⟨λx y, signed x ≤ signed y⟩
 
@@ -176,6 +177,7 @@ end
 instance decidable_lt : @decidable_rel word (<) := by apply_instance
 instance decidable_le : @decidable_rel word (≤) := by apply_instance
 instance decidable_ltu : decidable_rel ltu := by delta ltu; apply_instance
+instance decidable_leu : decidable_rel leu := by delta leu; apply_instance
 
 def cmp : comparison → word → word → bool
 | Ceq x y := x = y
@@ -570,7 +572,7 @@ bitwise_binop_shl bits_or rfl
 theorem xor_shl : ∀ x y n, word.xor (shl x n) (shl y n) = shl (word.xor x y) n :=
 bitwise_binop_shl bits_xor rfl
 
-lemma ltu_inv (x y) : ltu x y → unsigned x < unsigned y := sorry'
+lemma ltu_inv (x y) : ltu x y → unsigned x < unsigned y := id
 
 lemma ltu_iwordsize_inv (x) : ltu x iwordsize → unsigned x < wordsize := sorry'
 
@@ -866,6 +868,11 @@ theorem lt_sub_overflow (x y) :
 
 lemma signed_eq {x y} : x = y ↔ signed x = signed y := sorry'
 
+lemma unsigned_eq {x y} : x = y ↔ unsigned x = unsigned y := sorry'
+
+lemma leu_iff_ltu_or_eq (x y : word) : leu x y ↔ ltu x y ∨ x = y :=
+iff.trans (@le_iff_lt_or_eq ℕ _ _ _) (or_congr iff.rfl unsigned_eq.symm)
+
 lemma le_iff_lt_or_eq (x y : word) : x ≤ y ↔ x < y ∨ x = y :=
 iff.trans (@le_iff_lt_or_eq ℤ _ _ _) (or_congr iff.rfl signed_eq.symm)
 
@@ -902,6 +909,7 @@ lemma no_overlap_sound (ofs1 sz1 ofs2 sz2 base) :
 
 def size (x : word) : ℕ := nat.size (unsigned x)
 
+set_option type_context.unfold_lemmas true
 theorem size_zero : size 0 = 0 := congr_arg nat.size unsigned_zero
 
 theorem test_bit_size (x) : x > 0 → test_bit x (size x - 1) := sorry'
@@ -960,6 +968,23 @@ theorem unsigned_one : unsigned 1 = 1 := sorry'
 
 theorem one_ne_zero : (1:word) ≠ 0 := sorry'
 
+theorem succ_leu_of_ltu {x y} (h : ltu x y) : leu (x + 1) y :=
+begin
+  change unsigned (repr (unsigned x + unsigned 1)) ≤ unsigned y,
+  rw [unsigned_one, -int.coe_nat_add, word.unsigned_repr],
+  exact h,
+  exact nat.lt_of_lt_of_le h (unsigned_range_2 _),
+end
+
+theorem leu_pred_of_ltu {x y} (h : ltu x y) : leu x (y - 1) :=
+begin
+  change unsigned x ≤ unsigned (y - 1),
+  rw [sub_unsigned, unsigned_one, -int.coe_nat_sub, unsigned_repr],
+  exact nat.pred_le_pred h,
+  exact le_trans (nat.sub_le _ _) (unsigned_range_2 _),
+  exact lt_of_le_of_lt (nat.zero_le _) h
+end
+
 /- ** Properties of [modulus], [max_unsigned], etc. -/
 
 theorem half_modulus_modulus : modulus = 2 * half_modulus := sorry'
@@ -970,3 +995,54 @@ def scoe {w w' : ℕ} (x : word w) : word w' := repr (signed x)
 def ucoe {w w' : ℕ} (x : word w) : word w' := repr (unsigned x)
 
 end word
+
+def uword (n) := word n
+
+namespace uword
+open word
+section
+parameter {w : ℕ+}
+local notation `uword` := uword w
+
+instance coe_uword_nat : has_coe uword ℕ := ⟨unsigned⟩
+instance : has_zero uword := ⟨repr 0⟩
+instance : has_one uword := ⟨repr 1⟩
+
+instance eq_dec : decidable_eq uword := word.eq_dec
+
+instance : has_lt uword := ⟨ltu⟩
+instance : has_le uword := ⟨leu⟩
+
+instance : has_neg uword := ⟨word.neg⟩
+instance : has_add uword := ⟨word.add⟩
+instance : has_mul uword := ⟨word.mul⟩
+
+instance : has_div uword := ⟨divu⟩
+instance : has_mod uword := ⟨modu⟩
+
+instance decidable_lt : @decidable_rel uword (<) := by apply_instance
+instance decidable_le : @decidable_rel uword (≤) := by apply_instance
+
+instance comm_ring : comm_ring uword := word.comm_ring
+instance decidable_linear_order : decidable_linear_order uword :=
+{ le              := (≤),
+  le_refl         := λx, @le_refl ℕ _ _,
+  le_trans        := λx y z, @le_trans ℕ _ _ _ _,
+  le_antisymm     := λx y h1 h2, unsigned_eq.2 $ le_antisymm h1 h2,
+  lt              := (<),
+  le_iff_lt_or_eq := leu_iff_ltu_or_eq,
+  lt_irrefl       := λx, @lt_irrefl ℕ _ _,
+  le_total        := λx y, @le_total ℕ _ _ _,
+  decidable_lt    := by apply_instance,
+  decidable_le    := by apply_instance,
+  decidable_eq    := by apply_instance }
+
+theorem succ_le_of_lt {x y : uword} : x < y → x + 1 ≤ y := word.succ_leu_of_ltu
+
+theorem le_pred_of_lt {x y : uword} : x < y → x ≤ y - 1 := word.leu_pred_of_ltu
+
+theorem zero_le (x : uword) : 0 ≤ x :=
+show unsigned 0 ≤ _, by rw unsigned_zero; apply nat.zero_le
+
+end
+end uword
